@@ -232,6 +232,9 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #ifndef JSON_ARENA_MIN_BLOCK
 #  define JSON_ARENA_MIN_BLOCK  (4U * 1024U)
 #endif
+#ifndef JSON_MAX_ARRAY_LEN
+#  define JSON_MAX_ARRAY_LEN    (1024U * 1024U)  /**< Max items per array/object   */
+#endif
 
 /* ============================================================================
  * §6  ERROR CODES
@@ -536,6 +539,7 @@ JsonValue*  json_clone(JsonArena* dst, const JsonValue* src);
 
 #ifndef JSON_NO_STDLIB
 #  include <stdlib.h>   /* malloc, free, realloc */
+#  include <stdio.h>    /* snprintf              */
 #endif
 
 /* ── §11.1  Default libc allocator ─────────────────────────────────────── */
@@ -1020,60 +1024,6 @@ JSON_INLINE char json__consume(JsonLex* l)
 /** @brief Validate UTF-8 continuation byte. */
 JSON_INLINE bool json__is_cont(uint8_t b) { return (b & 0xC0U) == 0x80U; }
 
-/**
- * @brief  Validate and skip one UTF-8 code point starting at l->pos.
- *         Advances l->pos past the sequence.
- * @return true on valid sequence, false on error.
- * @note   RFC 3629 compliant; rejects overlong sequences and surrogates.
- */
-static bool json__utf8_advance(JsonLex* l)
-{
-    uint8_t b0, b1, b2, b3;
-
-    JSON_ASSERT(l != NULL);
-
-    if (l->pos >= l->len) { return false; }
-    b0 = (uint8_t)l->src[l->pos];
-
-    if (b0 < 0x80U) {
-        /* ASCII */
-        l->pos++;
-        return true;
-    } else if ((b0 & 0xE0U) == 0xC0U) {
-        /* 2-byte: U+0080..U+07FF */
-        if (l->pos + 1U >= l->len)             { return false; }
-        b1 = (uint8_t)l->src[l->pos + 1U];
-        if (!json__is_cont(b1))                { return false; }
-        if ((b0 & 0x1FU) < 2U)                 { return false; } /* Overlong */
-        l->pos += 2U;
-        return true;
-    } else if ((b0 & 0xF0U) == 0xE0U) {
-        /* 3-byte: U+0800..U+FFFF */
-        if (l->pos + 2U >= l->len)             { return false; }
-        b1 = (uint8_t)l->src[l->pos + 1U];
-        b2 = (uint8_t)l->src[l->pos + 2U];
-        if (!json__is_cont(b1) || !json__is_cont(b2)) { return false; }
-        /* Reject surrogates U+D800..U+DFFF */
-        if ((b0 == 0xEDU) && (b1 >= 0xA0U))   { return false; }
-        l->pos += 3U;
-        return true;
-    } else if ((b0 & 0xF8U) == 0xF0U) {
-        /* 4-byte: U+10000..U+10FFFF */
-        if (l->pos + 3U >= l->len)             { return false; }
-        b1 = (uint8_t)l->src[l->pos + 1U];
-        b2 = (uint8_t)l->src[l->pos + 2U];
-        b3 = (uint8_t)l->src[l->pos + 3U];
-        if (!json__is_cont(b1) || !json__is_cont(b2) || !json__is_cont(b3)) {
-            return false;
-        }
-        /* Reject > U+10FFFF */
-        if (b0 > 0xF4U) { return false; }
-        l->pos += 4U;
-        return true;
-    }
-    return false;
-}
-
 /* ── §11.6  String parsing (with \uXXXX decoding) ──────────────────────── */
 
 /** @brief Hex digit to value. Returns 0xFF on invalid input. */
@@ -1213,7 +1163,14 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
                         l->err = JSON_ERR_INVALID_STRING;
                         return JSON_ERR_INVALID_STRING;
                     } else {
-                        out_len += 3U; /* BMP: up to 3 UTF-8 bytes */
+                        /* DESIGN: exact byte count, not a constant 3.
+                         *   U+0000–U+007F  → 1 byte
+                         *   U+0080–U+07FF  → 2 bytes
+                         *   U+0800–U+FFFF  → 3 bytes
+                         * Using the maximum (3) over-allocates and corrupts
+                         * str->len, breaking key lookup and equality. */
+                        out_len += (hi_cp < 0x80U) ? 1U
+                                 : (hi_cp < 0x800U) ? 2U : 3U;
                     }
                     break;
                 }
@@ -1719,11 +1676,15 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
                     goto deliver_to_parent;
                 }
 
-                /* Push VALUE frame for first key */
-                stack[depth].state     = PS_OBJ_KEY;
-                stack[depth].container = node;
-                depth++;
-                /* Fall through to PS_OBJ_KEY on next iteration */
+                /*
+                 * DESIGN: this frame has been transformed in-place to
+                 * PS_OBJ_KEY.  The main loop will execute case PS_OBJ_KEY on
+                 * the next iteration — no extra frame push is needed.
+                 * Pushing a second PS_OBJ_KEY frame here (as done before this
+                 * fix) left stack[depth-1] as PS_OBJ_KEY when the closing '}'
+                 * tried to deliver the object to its parent, causing an
+                 * "invalid JSON" error on every non-empty object.
+                 */
                 continue;
 
             } else {
