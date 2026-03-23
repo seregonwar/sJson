@@ -4,7 +4,7 @@
  * @version 1.0.0
  * @date    2025
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier:  GPL-3.0 license
  *
  * ============================================================================
  * QUICK START
