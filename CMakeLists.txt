@@ -11,7 +11,7 @@ else()
 endif()
 
 # Header-only — test executable is the only build artifact
-add_executable(test_json test_json.c)
+add_executable(test_json src/test_json.c)
 target_link_libraries(test_json m)
 
 enable_testing()
