@@ -17,7 +17,7 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 asan: CFLAGS += -fsanitize=address,undefined -g
-asan: clean $(TEST_BIN)
+asan: $(TEST_BIN)
 	./$(TEST_BIN)
 
 clean:
