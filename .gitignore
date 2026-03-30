@@ -53,3 +53,8 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Build/test artifacts
+build/
+src/test_json
+src/test_json_asan
