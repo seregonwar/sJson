@@ -2,7 +2,7 @@
  * @author  Seregon
  * @file    json_pal.h
  * @brief   Safe, fast, single-header JSON library with Platform Abstraction Layer
- * @version 1.0.0
+ * @version 1.1.0
  * @date    2026
  *
  * SPDX-License-Identifier:  GPL-3.0 license
