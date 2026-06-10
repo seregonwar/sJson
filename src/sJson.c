@@ -1,6 +1,6 @@
 /**
  * @author  Seregon
- * @file    json_pal.h
+ * @file    sJson.c
  * @brief   Safe, fast, single-header JSON library with Platform Abstraction Layer
  * @version 1.1.0
  * @date    2026
