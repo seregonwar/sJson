@@ -4,7 +4,7 @@
  * @brief   Safe, fast, single-header JSON library with Platform Abstraction Layer
  * @version 1.1.0
  * @date    2026
- *
+ * @link    https://github.com/seregonwar/sJson  
  * SPDX-License-Identifier:  GPL-3.0 license
  *
  * ============================================================================
