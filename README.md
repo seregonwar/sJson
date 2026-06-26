@@ -2,8 +2,28 @@
 
 **sJson** is a single-header **C99** JSON library focused on safety, portability and measurable speed. It uses an arena allocator, has no third-party runtime dependency, and exposes a stable C API that can be wrapped by C++, Rust and other static languages.
 
-Version: **1.1.0**  
-License: **GPL-3.0-only**
+Version: **2.0.0**  
+License: **GPL-3.0-only OR MIT** (dual-license)
+
+## License
+
+This project is **dual-licensed** under **GPL-3.0-only** and **MIT**.
+
+Puoi usare questo progetto sotto licenza **GPL-3.0-only** oppure **MIT**.
+
+You may use this project under **GPL-3.0-only** *or* **MIT** — choose whichever license best fits your needs.
+
+- `LICENSE-GPL` — GNU General Public License v3.0 only
+- `LICENSE-MIT` — MIT License
+
+Each source file carries the following header:
+
+```
+SPDX-License-Identifier: GPL-3.0-only OR MIT
+
+This file is dual-licensed under GPL-3.0-only OR MIT.
+You may choose either license.
+```
 
 ## Project goal
 
