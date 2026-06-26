@@ -58,3 +58,4 @@ dkms.conf
 build/
 src/test_json
 src/test_json_asan
+.DS_Store

@@ -1,77 +1,6 @@
-/**
- * @author  Seregon
- * @file    sJson.c
- * @brief   Safe, fast, single-header JSON library with Platform Abstraction Layer
- * @version 1.1.0
- * @date    2026
- * @link    https://github.com/seregonwar/sJson  
- * SPDX-License-Identifier:  GPL-3.0 license
- *
- * ============================================================================
- * QUICK START
- * ============================================================================
- *
- *   // In ONE translation unit:
- *   #define JSON_IMPLEMENTATION
- *   #include "json_pal.h"
- *
- *   // Parse:
- *   JsonArena* arena = json_arena_create(NULL, 64 * 1024);
- *   JsonError  err;
- *   JsonValue* root = json_parse_cstr(arena, "[1,2,3]", &err);
- *
- *   // Query:
- *   JsonValue* item = json_path(root, "[1]", NULL);
- *
- *   // Cleanup:
- *   json_arena_destroy(arena);
- *
- * ============================================================================
- * PAL OVERRIDES (define BEFORE including)
- * ============================================================================
- *
- *   #define JSON_MEMCPY   my_memcpy     // void*(dst, src, n)
- *   #define JSON_MEMSET   my_memset     // void*(dst, c, n)
- *   #define JSON_MEMCMP   my_memcmp     // int(a, b, n)
- *   #define JSON_STRLEN   my_strlen     // size_t(s)
- *   #define JSON_ASSERT   my_assert     // void(expr)
- *   #define JSON_STRTOD   my_strtod     // double(s, end)
- *   #define JSON_NO_STDLIB            // Don't include stdlib headers
- *
- * ============================================================================
- * CONFIGURATION (define BEFORE including)
- * ============================================================================
- *
- *   #define JSON_MAX_DEPTH       64    // Max nesting depth (stack overflow guard)
- *   #define JSON_MAX_STRING_LEN  65536 // Max string length
- *   #define JSON_MAX_NODES       65536 // Max total value nodes per parse
- *   #define JSON_INTROSORT_THRESH 16   // Insertion sort below this size
- *   #define JSON_ARENA_ALIGN     8     // Arena allocation alignment
- *
- * ============================================================================
- * DESIGN RATIONALE
- * ============================================================================
- *
- *   MEMORY:   Arena allocator - zero fragmentation, O(1) alloc, bulk free.
- *             No malloc/free during parse; caller provides backing memory.
- *
- *   PARSER:   Iterative state machine - no recursion, bounded stack usage,
- *             safe on deeply nested input. Explicit parse stack on the heap.
- *
- *   NUMBERS:  Detects integer vs float at parse time. Integers stored as
- *             int64_t (exact). Floats stored as double with NaN/Inf guard.
- *
- *   OBJECTS:  Keys stored insertion-order. Separate sorted index array built
- *             on demand via introsort, enabling O(log n) binary search lookup.
- *
- *   SORT:     Introsort (quicksort + heapsort fallback + insertion sort leaf).
- *             Guaranteed O(n log n) worst-case. Insertion sort for n < 16.
- *
- *   UTF-8:    Full validation during string parsing (RFC 3629).
- *             \uXXXX escape sequences with surrogate pair support.
- *
- * @note Thread-safety: NOT thread-safe. Use separate arenas per thread.
- * @note MISRA C:2012 advisory (dynamic alloc via user-provided hooks only).
+/*
+ * sJson v1.1.0 — safe, fast, single-header JSON library in C99.
+ * SPDX-License-Identifier: GPL-3.0-only
  */
 
 #ifndef JSON_PAL_H
@@ -232,6 +161,9 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #endif
 #ifndef JSON_ARENA_MIN_BLOCK
 #  define JSON_ARENA_MIN_BLOCK  (4U * 1024U)
+#endif
+#ifndef JSON_FAST_FLOAT
+#  define JSON_FAST_FLOAT        1
 #endif
 #ifndef JSON_MAX_ARRAY_LEN
 #  define JSON_MAX_ARRAY_LEN    (1024U * 1024U)  /**< Max items per array/object   */
@@ -516,6 +448,7 @@ JsonError  json_obj_set (JsonValue* obj, JsonArena* arena,
                          const char* key, uint32_t klen, JsonValue* val);
 JsonError  json_obj_setz(JsonValue* obj, JsonArena* arena,
                          const char* key, JsonValue* val);
+JsonError  json_obj_finalize(JsonArena* arena, JsonValue* obj);
 
 /* --- Utilities --- */
 const char* json_error_str(JsonError err);
@@ -678,41 +611,46 @@ void json_arena_reset(JsonArena* arena)
     arena->node_count  = 0U;
 }
 
-void* json_arena_alloc(JsonArena* arena, size_t size)
+static void* json__arena_alloc_raw(JsonArena* arena, size_t size, bool zero_fill)
 {
-    size_t        aligned_size;
-    uint8_t*      ptr;
+    size_t aligned_size;
+    uint8_t* ptr;
     JsonArenaBlock* new_blk;
 
     if (JSON_UNLIKELY(arena == NULL || size == 0U)) { return NULL; }
 
     aligned_size = json__align_up(size);
-
-    /* Overflow guard on size alignment */
     if (JSON_UNLIKELY(aligned_size < size)) { return NULL; }
 
-    /* Fast path: fits in current block */
     if (JSON_LIKELY(arena->current->used + aligned_size <= arena->current->cap)) {
         ptr = json__block_data(arena->current) + arena->current->used;
         arena->current->used += aligned_size;
         arena->total_bytes   += aligned_size;
-        JSON_MEMSET(ptr, 0, aligned_size);
+        if (zero_fill) { JSON_MEMSET(ptr, 0, aligned_size); }
         return ptr;
     }
 
-    /* Slow path: allocate a new block */
     new_blk = json__block_new(arena, aligned_size);
     if (JSON_UNLIKELY(new_blk == NULL)) { return NULL; }
 
-    /* Append to chain */
     arena->current->next = new_blk;
     arena->current = new_blk;
 
     ptr = json__block_data(new_blk);
     new_blk->used       = aligned_size;
     arena->total_bytes += aligned_size;
-    JSON_MEMSET(ptr, 0, aligned_size);
+    if (zero_fill) { JSON_MEMSET(ptr, 0, aligned_size); }
     return ptr;
+}
+
+JSON_INLINE void* json__arena_alloc_uninit(JsonArena* arena, size_t size)
+{
+    return json__arena_alloc_raw(arena, size, false);
+}
+
+void* json_arena_alloc(JsonArena* arena, size_t size)
+{
+    return json__arena_alloc_raw(arena, size, true);
 }
 
 /* ── §11.3  FNV-1a Hash ─────────────────────────────────────────────────── */
@@ -942,7 +880,7 @@ static JsonError json__obj_sort(JsonValue* obj, JsonArena* arena)
 
     /* Allocate sorted_idx if not already present */
     if (o->sorted_idx == NULL) {
-        o->sorted_idx = (uint32_t*)json_arena_alloc(
+        o->sorted_idx = (uint32_t*)json__arena_alloc_uninit(
             arena, (size_t)o->cap * sizeof(uint32_t));
         if (JSON_UNLIKELY(o->sorted_idx == NULL)) { return JSON_ERR_OOM; }
     }
@@ -993,33 +931,23 @@ typedef struct {
     JsonError   err;
 } JsonLex;
 
-JSON_INLINE bool json__is_ws(char c)
-{
-    return (c == ' ') | (c == '\t') | (c == '\r') | (c == '\n');
-}
-
 static void json__lex_skip_ws(JsonLex* l)
 {
+    const char* s;
+    size_t p;
+    size_t n;
+
     JSON_ASSERT(l != NULL);
-    while (l->pos < l->len) {
-        char c = l->src[l->pos];
-        if (!json__is_ws(c)) { break; }
-        if (c == '\n') { l->line++; l->col = 0U; }
-        else           { l->col++; }
-        l->pos++;
+
+    s = l->src;
+    p = l->pos;
+    n = l->len;
+    while (p < n) {
+        char c = s[p];
+        if (c != ' ' && c != '\n' && c != '\r' && c != '\t') { break; }
+        p++;
     }
-}
-
-JSON_INLINE char json__peek(const JsonLex* l)
-{
-    return (l->pos < l->len) ? l->src[l->pos] : '\0';
-}
-
-JSON_INLINE char json__consume(JsonLex* l)
-{
-    char c = l->src[l->pos++];
-    l->col++;
-    return c;
+    l->pos = p;
 }
 
 /** @brief Validate UTF-8 continuation byte. */
@@ -1102,6 +1030,7 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
     size_t start_pos = l->pos; /* After opening quote */
     size_t out_len   = 0U;
     bool   has_escape= false;
+    uint32_t raw_hash = 0x811C9DC5UL;
     size_t scan_pos;
     char*  out_buf;
     size_t write_pos;
@@ -1184,7 +1113,8 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
             l->err = JSON_ERR_INVALID_STRING;
             return JSON_ERR_INVALID_STRING;
         } else {
-            /* UTF-8 multi-byte: accept as-is (validated in pass 2) */
+            raw_hash ^= (uint32_t)c;
+            raw_hash *= 0x01000193UL;
             out_len++;
             scan_pos++;
         }
@@ -1202,7 +1132,7 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
 
     /* ── Pass 2: Allocate and decode ─── */
     out_buf = (out_len > 0U)
-              ? (char*)json_arena_alloc(arena, out_len)
+              ? (char*)json__arena_alloc_uninit(arena, out_len)
               : NULL;
 
     if (out_len > 0U && JSON_UNLIKELY(out_buf == NULL)) {
@@ -1275,20 +1205,49 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
 
     str->data = out_buf;
     str->len  = (uint32_t)out_len;
-    str->hash = json_fnv1a(out_buf, out_len);
+    str->hash = has_escape ? json_fnv1a(out_buf, out_len) : raw_hash;
     return JSON_OK;
 }
 
 /* ── §11.7  Number parsing ──────────────────────────────────────────────── */
+
+static bool json__fast_float_from_parts(uint64_t mant, uint32_t sig,
+                                         int32_t exp10, bool neg,
+                                         double* out)
+{
+    static const double pow10_pos[] = {
+        1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7,
+        1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+        1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+    };
+    static const double pow10_neg[] = {
+        1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7,
+        1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13, 1e-14, 1e-15,
+        1e-16, 1e-17, 1e-18, 1e-19, 1e-20, 1e-21, 1e-22
+    };
+    double v;
+
+    if (out == NULL) { return false; }
+    if (sig == 0U) {
+        *out = neg ? -0.0 : 0.0;
+        return true;
+    }
+    if (exp10 < -22 || exp10 > 22) { return false; }
+
+    v = (double)mant;
+    if (exp10 < 0) { v *= pow10_neg[-exp10]; }
+    else if (exp10 > 0) { v *= pow10_pos[exp10]; }
+    *out = neg ? -v : v;
+    return true;
+}
 
 /**
  * @brief  Parse JSON number. Detects integer vs float at parse time.
  *
  * Grammar: -? (0 | [1-9][0-9]*) (.[0-9]+)? ([eE][+-]?[0-9]+)?
  *
- * DESIGN: Parse as integer if no '.' or 'e'/'E'. Fall back to strtod only
- *         when fractional/exponent parts are present. This preserves exact
- *         integer semantics for the common case and avoids locale issues.
+ * DESIGN: Parse as integer if no '.' or 'e'/'E'. Use a small fast decimal
+ *         path for common floats and fall back to strtod for hard cases.
  */
 static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
                                     JsonValue* out)
@@ -1296,8 +1255,13 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
     size_t start = l->pos;
     bool   negative = false;
     bool   is_float = false;
+    bool   fast_ok  = true;
+    uint64_t fast_mant = 0U;
+    uint32_t fast_sig  = 0U;
+    int32_t  fast_exp10 = 0;
     int64_t ival    = 0;
     char   num_buf[64];
+    char*  num_ptr = num_buf;
     size_t num_len;
     char*  end_ptr;
 
@@ -1314,17 +1278,25 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
         return JSON_ERR_UNEXPECTED_EOF;
     }
 
+#define JSON__FAST_DIGIT(d_) do {                              \
+    uint32_t jd_ = (uint32_t)(d_);                              \
+    if (fast_sig != 0U || jd_ != 0U) {                          \
+        if (fast_sig >= 19U) { fast_ok = false; }               \
+        else { fast_mant = fast_mant * 10U + jd_; fast_sig++; } \
+    }                                                           \
+} while (0)
+
     /* Integer part */
     if (l->src[l->pos] == '0') {
         l->pos++;
         if (l->pos < l->len && l->src[l->pos] >= '0' && l->src[l->pos] <= '9') {
-            /* Leading zero not allowed in JSON */
             l->err = JSON_ERR_INVALID_NUMBER;
             return JSON_ERR_INVALID_NUMBER;
         }
     } else if (l->src[l->pos] >= '1' && l->src[l->pos] <= '9') {
         while (l->pos < l->len &&
                l->src[l->pos] >= '0' && l->src[l->pos] <= '9') {
+            JSON__FAST_DIGIT((uint8_t)(l->src[l->pos] - '0'));
             l->pos++;
         }
     } else {
@@ -1343,6 +1315,8 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
         }
         while (l->pos < l->len &&
                l->src[l->pos] >= '0' && l->src[l->pos] <= '9') {
+            JSON__FAST_DIGIT((uint8_t)(l->src[l->pos] - '0'));
+            fast_exp10--;
             l->pos++;
         }
     }
@@ -1350,10 +1324,13 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
     /* Exponent part */
     if (l->pos < l->len &&
         (l->src[l->pos] == 'e' || l->src[l->pos] == 'E')) {
+        int32_t exp_val = 0;
+        bool exp_neg = false;
         is_float = true;
         l->pos++;
         if (l->pos < l->len &&
             (l->src[l->pos] == '+' || l->src[l->pos] == '-')) {
+            exp_neg = (l->src[l->pos] == '-');
             l->pos++;
         }
         if (l->pos >= l->len ||
@@ -1363,66 +1340,74 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
         }
         while (l->pos < l->len &&
                l->src[l->pos] >= '0' && l->src[l->pos] <= '9') {
+            int32_t d = (int32_t)(uint8_t)(l->src[l->pos] - '0');
+            if (exp_val > 1000) { fast_ok = false; }
+            else { exp_val = exp_val * 10 + d; }
             l->pos++;
         }
+        fast_exp10 += exp_neg ? -exp_val : exp_val;
     }
 
     num_len = l->pos - start;
-    if (num_len >= sizeof(num_buf)) {
-        l->err = JSON_ERR_OVERFLOW;
-        return JSON_ERR_OVERFLOW;
-    }
-
-    JSON_MEMCPY(num_buf, l->src + start, num_len);
-    num_buf[num_len] = '\0';
 
     if (is_float) {
-        double fval = JSON_STRTOD(num_buf, &end_ptr);
-        if (end_ptr != num_buf + num_len) {
-            l->err = JSON_ERR_INVALID_NUMBER;
-            return JSON_ERR_INVALID_NUMBER;
+        double fval;
+#if JSON_FAST_FLOAT
+        if (fast_ok && json__fast_float_from_parts(fast_mant, fast_sig,
+                                                   fast_exp10, negative,
+                                                   &fval)) {
+            out->type = JSON_FLOAT;
+            out->v.f  = fval;
+            return JSON_OK;
         }
-        /* Safety: NaN/Inf must not be stored */
-        if (JSON_UNLIKELY(isnan(fval) || isinf(fval))) {
-            l->err = JSON_ERR_INVALID_NUMBER;
-            return JSON_ERR_INVALID_NUMBER;
-        }
-        out->type = JSON_FLOAT;
-        out->v.f  = fval;
-    } else {
-        /* Parse as int64_t */
-        int64_t parsed;
-        char* eptr;
-#if defined(JSON_NO_STDLIB)
-        /* Minimal strtoll for freestanding environments */
-        parsed = 0;
-        size_t di;
-        for (di = negative ? 1U : 0U; di < num_len; di++) {
-            char d = num_buf[di];
-            if (d < '0' || d > '9') { break; }
-            /* Overflow check */
-            if (parsed > (INT64_MAX - (d - '0')) / 10) {
-                parsed = negative ? INT64_MIN : INT64_MAX;
-                break;
-            }
-            parsed = parsed * 10 + (d - '0');
-        }
-        ival = negative ? -parsed : parsed;
-        (void)eptr;
-#else
-        parsed = JSON_STRTOLL(num_buf, &eptr, 10);
-        if (eptr != num_buf + num_len) {
-            l->err = JSON_ERR_INVALID_NUMBER;
-            return JSON_ERR_INVALID_NUMBER;
-        }
-        ival = parsed;
 #endif
-        (void)negative; /* Already encoded in the string we passed to strtoll */
+        {
+            if (num_len >= sizeof(num_buf)) {
+                num_ptr = (char*)json__arena_alloc_uninit(arena, num_len + 1U);
+                if (JSON_UNLIKELY(num_ptr == NULL)) {
+                    l->err = JSON_ERR_OOM;
+                    return JSON_ERR_OOM;
+                }
+            }
+            JSON_MEMCPY(num_ptr, l->src + start, num_len);
+            num_ptr[num_len] = '\0';
+
+            fval = JSON_STRTOD(num_ptr, &end_ptr);
+            if (end_ptr != num_ptr + num_len) {
+                l->err = JSON_ERR_INVALID_NUMBER;
+                return JSON_ERR_INVALID_NUMBER;
+            }
+            if (JSON_UNLIKELY(isnan(fval) || isinf(fval))) {
+                l->err = JSON_ERR_INVALID_NUMBER;
+                return JSON_ERR_INVALID_NUMBER;
+            }
+            out->type = JSON_FLOAT;
+            out->v.f  = fval;
+        }
+    } else {
+        static const uint64_t POS_LIMIT = 9223372036854775807ULL;
+        static const uint64_t NEG_LIMIT = 9223372036854775808ULL;
+        const uint64_t limit = negative ? NEG_LIMIT : POS_LIMIT;
+
+        if (JSON_UNLIKELY(!fast_ok || fast_mant > limit)) {
+            l->err = JSON_ERR_OVERFLOW;
+            return JSON_ERR_OVERFLOW;
+        }
+
+        if (negative) {
+            ival = (fast_mant == NEG_LIMIT)
+                 ? (int64_t)(-9223372036854775807LL - 1LL)
+                 : -(int64_t)fast_mant;
+        } else {
+            ival = (int64_t)fast_mant;
+        }
         out->type = JSON_INTEGER;
         out->v.i  = ival;
     }
     return JSON_OK;
 }
+
+#undef JSON__FAST_DIGIT
 
 /* ── §11.8  Iterative Parser ────────────────────────────────────────────── */
 
@@ -1461,7 +1446,7 @@ static JsonValue* json__new_node(JsonArena* arena)
     JSON_ASSERT(arena != NULL);
 
     if (JSON_UNLIKELY(arena->node_count >= JSON_MAX_NODES)) { return NULL; }
-    v = (JsonValue*)json_arena_alloc(arena, sizeof(JsonValue));
+    v = (JsonValue*)json__arena_alloc_uninit(arena, sizeof(JsonValue));
     if (JSON_LIKELY(v != NULL)) {
         arena->node_count++;
     }
@@ -1482,7 +1467,7 @@ static JsonError json__arr_grow(JsonArr* a, JsonArena* arena)
     if (JSON_UNLIKELY(new_cap < a->cap)) { return JSON_ERR_OVERFLOW; }
     if (JSON_UNLIKELY(new_cap > JSON_MAX_ARRAY_LEN)) { return JSON_ERR_OVERFLOW; }
 
-    new_items = (JsonValue**)json_arena_alloc(arena,
+    new_items = (JsonValue**)json__arena_alloc_uninit(arena,
                     (size_t)new_cap * sizeof(JsonValue*));
     if (JSON_UNLIKELY(new_items == NULL)) { return JSON_ERR_OOM; }
 
@@ -1505,7 +1490,7 @@ static JsonError json__obj_grow(JsonObj* o, JsonArena* arena)
     new_cap = (o->cap == 0U) ? 8U : o->cap * 2U;
     if (JSON_UNLIKELY(new_cap < o->cap)) { return JSON_ERR_OVERFLOW; }
 
-    new_pairs = (JsonPair*)json_arena_alloc(arena,
+    new_pairs = (JsonPair*)json__arena_alloc_uninit(arena,
                     (size_t)new_cap * sizeof(JsonPair));
     if (JSON_UNLIKELY(new_pairs == NULL)) { return JSON_ERR_OOM; }
 
@@ -2446,7 +2431,7 @@ JsonError json_write_arena(const JsonValue* v, JsonArena* arena,
 
     needed += 2U; /* NUL + optional newline */
 
-    buf = (char*)json_arena_alloc(arena, needed);
+    buf = (char*)json__arena_alloc_uninit(arena, needed);
     if (JSON_UNLIKELY(buf == NULL)) { return JSON_ERR_OOM; }
 
     err = json_write(v, buf, needed, len_out, opts);
@@ -2506,7 +2491,7 @@ JsonValue* json_make_string(JsonArena* arena, const char* s, uint32_t len)
         return v;
     }
 
-    copy = (char*)json_arena_alloc(arena, (size_t)len);
+    copy = (char*)json__arena_alloc_uninit(arena, (size_t)len);
     if (JSON_UNLIKELY(copy == NULL)) { return NULL; }
     JSON_MEMCPY(copy, s, (size_t)len);
 
@@ -2588,7 +2573,7 @@ JsonError json_obj_set(JsonValue* obj, JsonArena* arena,
         if (err != JSON_OK) { return err; }
     }
 
-    key_copy = (char*)json_arena_alloc(arena, (size_t)klen);
+    key_copy = (char*)json__arena_alloc_uninit(arena, (size_t)klen);
     if (JSON_UNLIKELY(key_copy == NULL)) { return JSON_ERR_OOM; }
     JSON_MEMCPY(key_copy, key, klen);
 
@@ -2678,7 +2663,7 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
     case JSON_STRING: {
         char* copy = NULL;
         if (src->v.s.len > 0U && src->v.s.data != NULL) {
-            copy = (char*)json_arena_alloc(dst, src->v.s.len);
+            copy = (char*)json__arena_alloc_uninit(dst, src->v.s.len);
             if (copy == NULL) { return NULL; }
             JSON_MEMCPY(copy, src->v.s.data, src->v.s.len);
         }
@@ -2694,7 +2679,7 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
         da->cap = sa->len;
         da->items = NULL;
         if (sa->len > 0U) {
-            da->items = (JsonValue**)json_arena_alloc(dst,
+            da->items = (JsonValue**)json__arena_alloc_uninit(dst,
                             sa->len * sizeof(JsonValue*));
             if (da->items == NULL) { return NULL; }
             for (i = 0U; i < sa->len; i++) {
@@ -2713,14 +2698,14 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
         do_->is_sorted  = false;
         do_->pairs = NULL;
         if (so->len > 0U) {
-            do_->pairs = (JsonPair*)json_arena_alloc(dst,
+            do_->pairs = (JsonPair*)json__arena_alloc_uninit(dst,
                             so->len * sizeof(JsonPair));
             if (do_->pairs == NULL) { return NULL; }
             for (i = 0U; i < so->len; i++) {
                 const JsonStr* sk = &so->pairs[i].key;
                 char* kc = NULL;
                 if (sk->len > 0U && sk->data != NULL) {
-                    kc = (char*)json_arena_alloc(dst, sk->len);
+                    kc = (char*)json__arena_alloc_uninit(dst, sk->len);
                     if (kc == NULL) { return NULL; }
                     JSON_MEMCPY(kc, sk->data, sk->len);
                 }
@@ -2782,115 +2767,3 @@ const char* json_error_str(JsonError err)
 
 #endif /* JSON_IMPLEMENTATION */
 #endif /* JSON_PAL_H */
-
-/*
- * ============================================================================
- * USAGE EXAMPLE
- * ============================================================================
- *
- * #define JSON_IMPLEMENTATION
- * #include "json_pal.h"
- * #include <stdio.h>
- *
- * int main(void) {
- *     JsonArena* arena = json_arena_create(NULL, 64 * 1024);
- *     if (!arena) return 1;
- *
- *     const char* input =
- *         "{\"name\":\"Alice\",\"scores\":[98,72,85],\"active\":true}";
- *
- *     JsonError  err;
- *     JsonValue* root = json_parse_cstr(arena, input, &err);
- *     if (!root) {
- *         fprintf(stderr, "Parse error: %s\n", json_error_str(err));
- *         json_arena_destroy(arena);
- *         return 1;
- *     }
- *
- *     // Finalize for O(log n) key lookup
- *     json_obj_finalize(arena, root);
- *
- *     // Access fields
- *     JsonValue* name_v;
- *     json_obj_get(root, "name", &name_v);
- *     const char* name; uint32_t nlen;
- *     json_get_string(name_v, &name, &nlen);
- *     printf("Name: %.*s\n", (int)nlen, name);
- *
- *     // Path query
- *     JsonValue* score1 = json_path(root, "scores[1]", NULL);
- *     int64_t s; json_get_int(score1, &s);
- *     printf("Score[1]: %lld\n", (long long)s);
- *
- *     // Build and serialize
- *     JsonValue* out_obj = json_make_object(arena);
- *     json_obj_setz(out_obj, arena, "result", json_make_int(arena, s * 2));
- *     char buf[256];
- *     JsonWriteOpts opts = { .pretty = true, .indent = 4 };
- *     json_write(out_obj, buf, sizeof(buf), NULL, &opts);
- *     printf("%s\n", buf);
- *
- *     json_arena_destroy(arena);
- *     return 0;
- * }
- *
- * ============================================================================
- * FEATURE SUMMARY
- * ============================================================================
- *
- * Parsing:
- *   [x] Full RFC 8259 JSON compliance
- *   [x] Iterative parser — no recursion, O(1) stack usage
- *   [x] Depth-limited (JSON_MAX_DEPTH, default 64)
- *   [x] Node-count-limited (JSON_MAX_NODES)
- *   [x] Integer/float auto-detection at parse time
- *   [x] \uXXXX escape decoding with surrogate pair support
- *   [x] UTF-8 validation (RFC 3629)
- *   [x] Leading-zero detection
- *   [x] NaN/Inf rejection
- *   [x] Control character rejection in strings
- *
- * Memory:
- *   [x] Arena allocator — zero fragmentation, O(1) alloc
- *   [x] Pluggable allocator (custom malloc/free/realloc)
- *   [x] Arena reset (keep memory, reuse for next parse)
- *   [x] All allocations zeroed
- *
- * Object lookup:
- *   [x] FNV-1a hash for fast key comparison
- *   [x] Introsort (O(n log n) worst-case) for key index
- *   [x] Binary search O(log n) after finalization
- *   [x] Linear scan O(n) before finalization
- *   [x] Insertion-order iteration
- *
- * Serialization:
- *   [x] Compact and pretty-print modes
- *   [x] Configurable indent size
- *   [x] Sorted key output
- *   [x] ASCII-only escape mode
- *   [x] Size measurement without allocation (json_measure)
- *   [x] Arena-allocated output string
- *
- * Value construction:
- *   [x] Null, bool, integer, float, string, array, object
- *   [x] Array push, object set (insert or update)
- *   [x] Deep equality (json_equal)
- *   [x] Deep clone across arenas (json_clone)
- *
- * Platform:
- *   [x] PAL layer: overridable memcpy/memset/memcmp/strlen/strtod/assert
- *   [x] C99 compatible; C11 static asserts if available
- *   [x] Endianness detection
- *   [x] Freestanding (JSON_NO_STDLIB) support
- *   [x] MSVC / GCC / Clang detection
- *   [x] Compiler hints: always_inline, likely/unlikely, restrict
- *
- * Safety:
- *   [x] All pointer parameters NULL-checked
- *   [x] All array bounds checked
- *   [x] All arithmetic overflow-checked
- *   [x] No dynamic allocation (arena only)
- *   [x] No VLAs, no recursion in parser
- *   [x] Explicit error codes — no exceptions, no abort
- * ============================================================================
- */
