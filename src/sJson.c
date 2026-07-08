@@ -1262,6 +1262,7 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
     uint64_t fast_mant = 0U;
     uint32_t fast_sig  = 0U;
     int32_t  fast_exp10 = 0;
+    (void)fast_exp10; /* unused when JSON_FAST_FLOAT=0 */
     int64_t ival    = 0;
     char   num_buf[64];
     char*  num_ptr = num_buf;
