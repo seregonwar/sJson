@@ -1450,7 +1450,12 @@ static JsonValue* json__new_node(JsonArena* arena)
     JSON_ASSERT(arena != NULL);
 
     if (JSON_UNLIKELY(arena->node_count >= JSON_MAX_NODES)) { return NULL; }
-    v = (JsonValue*)json__arena_alloc_uninit(arena, sizeof(JsonValue));
+    /* Zero the node: json_make_object()/json_make_array() only set .type and
+     * rely on the JsonObj/JsonArr members starting at 0. The uninitialized
+     * allocator left len/cap/pairs/sorted_idx indeterminate, so the first
+     * json_obj_set()/json_arr_push() on a freshly built container read
+     * garbage (undefined behavior). */
+    v = (JsonValue*)json_arena_alloc(arena, sizeof(JsonValue));
     if (JSON_LIKELY(v != NULL)) {
         arena->node_count++;
     }
