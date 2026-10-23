@@ -105,8 +105,8 @@ exposes immutable reads, so documents and values are `Send + Sync`. `to_json()`
 returns an owned UTF-8 string. Numeric conversion reports overflow rather than
 casting out-of-range floating-point values.
 
-On MSVC targets the default generator is Visual Studio 2022; override
-`CMAKE_GENERATOR` when using another supported generator. Cross-compiling requires
+On MSVC targets the build detects the installed Visual Studio version and selects
+a matching CMake generator; override `CMAKE_GENERATOR` to choose another one. Cross-compiling requires
 `SJSON_CMAKE_TOOLCHAIN_FILE`. The crate currently builds from the repository and
 is deliberately not published to crates.io as a standalone source package.
 

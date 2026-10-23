@@ -7,6 +7,44 @@ fn run(command: &mut Command) {
     assert!(status.success(), "native sJson build failed");
 }
 
+fn visual_studio_generator(cmake: &std::ffi::OsStr) -> String {
+    let installer =
+        PathBuf::from(env::var_os("ProgramFiles(x86)").expect("missing ProgramFiles(x86)"))
+            .join("Microsoft Visual Studio/Installer/vswhere.exe");
+    let version = Command::new(installer)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationVersion",
+            "-utf8",
+        ])
+        .output()
+        .expect("Visual Studio detection failed; set CMAKE_GENERATOR explicitly");
+    assert!(version.status.success(), "vswhere failed");
+    let version = String::from_utf8(version.stdout).expect("invalid Visual Studio version");
+    let major = version
+        .trim()
+        .split('.')
+        .next()
+        .filter(|s| !s.is_empty())
+        .expect("no Visual Studio C++ toolchain found; set CMAKE_GENERATOR explicitly");
+    let prefix = format!("Visual Studio {major} ");
+    let help = Command::new(cmake)
+        .arg("--help")
+        .output()
+        .expect("cannot query CMake generators");
+    String::from_utf8_lossy(&help.stdout).lines()
+        .map(|line| line.trim_start_matches(['*', ' ']))
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name.trim()))
+        .find(|name| name.starts_with(&prefix))
+        .map(str::to_owned)
+        .expect("CMake does not support the installed Visual Studio; update CMake or set CMAKE_GENERATOR")
+}
+
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
@@ -20,7 +58,10 @@ fn main() {
             "aarch64" => "ARM64",
             _ => "x64",
         };
-        configure.args(["-G", "Visual Studio 17 2022", "-A", architecture]);
+        configure
+            .arg("-G")
+            .arg(visual_studio_generator(&cmake))
+            .args(["-A", architecture]);
     }
     configure.arg("-S").arg(&root).arg("-B").arg(&output).args([
         "-DCMAKE_BUILD_TYPE=Release",

@@ -11,8 +11,8 @@ jobs:
         config: [Debug, Release]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DBUILD_SHARED_LIBS=ON -DSJSON_WARNINGS_AS_ERRORS=ON -DSJSON_BUILD_BENCHMARKS=OFF -DSJSON_BUILD_FUZZERS=ON
@@ -24,7 +24,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,7 +34,7 @@ jobs:
   sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DSJSON_SANITIZERS=ON -DSJSON_BUILD_BENCHMARKS=OFF -DSJSON_BUILD_FUZZERS=ON
         env:
           CC: clang
