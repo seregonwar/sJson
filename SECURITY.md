@@ -18,3 +18,8 @@ make check
 make asan
 make ubsan
 ```
+
+See [validation](docs/testing.md) for the full C/C++/FFI suite, counted allocation
+tests and sanitizer configuration. C values and string views expire on arena
+reset, trim or destruction. Opaque-ABI pointers expire when their document is
+freed; Rust and Python wrappers enforce their documented ownership boundaries.

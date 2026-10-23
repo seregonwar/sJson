@@ -20,4 +20,15 @@ Supported common read-path APIs include:
 - `cJSON_GetStringValue`, `cJSON_GetNumberValue`;
 - `cJSON_Print`, `cJSON_PrintUnformatted`, `cJSON_free`.
 
-Returned child wrappers from lookup/access functions should be released with `cJSON_Delete`; they do not own the arena.
+Each returned child wrapper must be released with `cJSON_Delete`. Wrappers share
+ownership of the arena, so a retained child stays valid after the root wrapper
+is deleted. This differs from real cJSON's borrowed-child convention.
+
+`cJSON_GetStringValue` caches one NUL-terminated view per wrapper; repeated calls
+do not grow the arena. Do not free that pointer. Printed strings are separate
+allocations and must be paired with `cJSON_free`. The optional
+`SJSON_CJSON_MALLOC`/`SJSON_CJSON_FREE` macros must be a matching allocator pair.
+
+The header is installed under `sjson/compat/cjson`; use the include directory
+provided by the `sJson::sjson` CMake target. Numeric `valueint` fields saturate to
+the native `int` range, avoiding undefined floating-point casts.

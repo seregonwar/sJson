@@ -12,6 +12,7 @@ TEST_SRC  ?= $(SRC_DIR)/test_json.c
 TEST_BIN  ?= $(SRC_DIR)/test_json
 TEST_INC  ?= $(SRC_DIR)/json_pal.h
 IMPL_SRC  ?= $(SRC_DIR)/sJson.c
+RELIABILITY_BIN ?= tests/test_reliability
 BENCH_SRC     ?= benchmarks/bench_sjson.c
 BENCH_BIN     ?= benchmarks/bench_sjson
 COMPARE_SRC   ?= benchmarks/bench_compare.c
@@ -29,16 +30,24 @@ all: $(TEST_BIN)
 $(TEST_BIN): $(TEST_SRC) $(TEST_INC) $(IMPL_SRC)
 	$(GCC_ENV) $(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-test: $(TEST_BIN)
-	./$(TEST_BIN)
+$(RELIABILITY_BIN): tests/test_reliability.c $(TEST_INC) $(IMPL_SRC)
+	$(GCC_ENV) $(CC) $(CFLAGS) -I$(SRC_DIR) $< -o $@ $(LDFLAGS)
 
-asan: CFLAGS += -fsanitize=address,undefined -g
-asan: $(TEST_BIN)
+test: $(TEST_BIN) $(RELIABILITY_BIN)
 	./$(TEST_BIN)
+	./$(RELIABILITY_BIN)
 
-ubsan: CFLAGS += -fsanitize=undefined -g
-ubsan: $(TEST_BIN)
-	./$(TEST_BIN)
+asan:
+	$(GCC_ENV) $(CC) $(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined $(TEST_SRC) -o $(SRC_DIR)/test_json_asan $(LDFLAGS)
+	./$(SRC_DIR)/test_json_asan
+	$(GCC_ENV) $(CC) $(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -I$(SRC_DIR) tests/test_reliability.c -o tests/test_reliability_asan $(LDFLAGS)
+	./tests/test_reliability_asan
+
+ubsan:
+	$(GCC_ENV) $(CC) $(CFLAGS) -O1 -g -fsanitize=undefined $(TEST_SRC) -o $(SRC_DIR)/test_json_ubsan $(LDFLAGS)
+	./$(SRC_DIR)/test_json_ubsan
+	$(GCC_ENV) $(CC) $(CFLAGS) -O1 -g -fsanitize=undefined -I$(SRC_DIR) tests/test_reliability.c -o tests/test_reliability_ubsan $(LDFLAGS)
+	./tests/test_reliability_ubsan
 
 fuzz-smoke:
 	$(GCC_ENV) $(CC) $(CFLAGS) fuzz/fuzz_parse.c -o fuzz/fuzz_parse_smoke $(LDFLAGS)
@@ -74,4 +83,5 @@ fetch-assets:
 	bash scripts/fetch_official_assets.sh
 
 clean:
-	rm -f $(TEST_BIN) $(BENCH_BIN) $(COMPARE_BIN) $(ASSET_BIN) $(CORPUS_BIN) fuzz/fuzz_parse_smoke
+	rm -f $(TEST_BIN) $(RELIABILITY_BIN) $(BENCH_BIN) $(COMPARE_BIN) $(ASSET_BIN) $(CORPUS_BIN) fuzz/fuzz_parse_smoke
+	rm -f $(SRC_DIR)/test_json_asan $(SRC_DIR)/test_json_ubsan tests/test_reliability_asan tests/test_reliability_ubsan

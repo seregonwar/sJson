@@ -1,10 +1,4 @@
-/*
- * sJson v1.1.0 — safe, fast, single-header JSON library in C99.
- * SPDX-License-Identifier: GPL-3.0-only OR MIT
- *
- * This file is dual-licensed under GPL-3.0-only OR MIT.
- * You may choose either license.
- */
+/* SPDX-License-Identifier: GPL-3.0-only OR MIT */
 
 #define JSON_IMPLEMENTATION
 #include "json_pal.h"
@@ -405,7 +399,7 @@ static int test_arena_reset(void) {
 
 int main(void) {
     int f = 0;
-    printf("=== sJson v1.1 regression suite ===\n\n");
+    printf("=== sJson %s regression suite ===\n\n", SJSON_VERSION);
     f += test_primitives();
     f += test_objects_arrays();
     f += test_path();

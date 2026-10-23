@@ -59,3 +59,14 @@ build/
 src/test_json
 src/test_json_asan
 .DS_Store
+target/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+src/test_json_ubsan
+fuzz/fuzz_parse_smoke
+tests/json_corpus_runner
+tests/test_reliability
+tests/test_reliability_asan
+tests/test_reliability_ubsan

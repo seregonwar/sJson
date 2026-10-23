@@ -1,17 +1,12 @@
-/*
- * sJson v1.1.0 — safe, fast, single-header JSON library in C99.
- * SPDX-License-Identifier: GPL-3.0-only OR MIT
- *
- * This file is dual-licensed under GPL-3.0-only OR MIT.
- * You may choose either license.
- */
+/* sJson - SPDX-License-Identifier: GPL-3.0-only OR MIT */
 
 #ifndef JSON_PAL_H
 #define JSON_PAL_H
 
-/* ============================================================================
- * §1  PLATFORM DETECTION
- * ============================================================================ */
+#define SJSON_VERSION "2.0.0"
+#define SJSON_VERSION_MAJOR 2
+#define SJSON_VERSION_MINOR 0
+#define SJSON_VERSION_PATCH 0
 
 #if defined(_MSC_VER)
 #  define JSON_CC_MSVC   1
@@ -42,10 +37,6 @@
 #ifndef JSON_BIG_ENDIAN
 #  define JSON_LITTLE_ENDIAN 1
 #endif
-
-/* ============================================================================
- * §2  PORTABLE TYPE SYSTEM
- * ============================================================================ */
 
 #ifndef JSON_NO_STDLIB
 #  include <stdint.h>
@@ -81,10 +72,6 @@ _Static_assert(sizeof(uint64_t) == 8, "uint64_t must be 8 bytes");
 _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #endif
 
-/* ============================================================================
- * §3  COMPILER HINTS & PORTABILITY MACROS
- * ============================================================================ */
-
 #if defined(JSON_CC_GCC) || defined(JSON_CC_CLANG)
 #  define JSON_INLINE      __attribute__((always_inline)) static inline
 #  define JSON_NOINLINE    __attribute__((noinline))
@@ -110,10 +97,6 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #  define JSON_PURE
 #  define JSON_NORETURN
 #endif
-
-/* ============================================================================
- * §4  PAL OVERRIDABLE PRIMITIVES
- * ============================================================================ */
 
 #ifndef JSON_MEMCPY
 #  define JSON_MEMCPY  memcpy
@@ -143,10 +126,6 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #  endif
 #endif
 
-/* ============================================================================
- * §5  CONFIGURATION DEFAULTS
- * ============================================================================ */
-
 #ifndef JSON_MAX_DEPTH
 #  define JSON_MAX_DEPTH        64U
 #endif
@@ -162,6 +141,9 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #ifndef JSON_ARENA_ALIGN
 #  define JSON_ARENA_ALIGN      8U
 #endif
+#if JSON_ARENA_ALIGN == 0 || (JSON_ARENA_ALIGN & (JSON_ARENA_ALIGN - 1U)) != 0
+#  error "JSON_ARENA_ALIGN must be a nonzero power of two"
+#endif
 #ifndef JSON_ARENA_MIN_BLOCK
 #  define JSON_ARENA_MIN_BLOCK  (4U * 1024U)
 #endif
@@ -171,10 +153,6 @@ _Static_assert(sizeof(int64_t)  == 8, "int64_t must be 8 bytes");
 #ifndef JSON_MAX_ARRAY_LEN
 #  define JSON_MAX_ARRAY_LEN    (1024U * 1024U)  /**< Max items per array/object   */
 #endif
-
-/* ============================================================================
- * §6  ERROR CODES
- * ============================================================================ */
 
 typedef enum {
     JSON_OK                  =  0,  /**< Success                              */
@@ -192,10 +170,6 @@ typedef enum {
     JSON_ERR_BUFFER_TOO_SMALL= -12, /**< Output buffer too small              */
     JSON_ERR_NODE_LIMIT      = -13  /**< Exceeded JSON_MAX_NODES              */
 } JsonError;
-
-/* ============================================================================
- * §7  VALUE TYPES & STRUCTURES
- * ============================================================================ */
 
 typedef enum {
     JSON_NULL    = 0,
@@ -246,10 +220,6 @@ struct JsonValue {
     } v;
 };
 
-/* ============================================================================
- * §8  ARENA ALLOCATOR
- * ============================================================================ */
-
 /**
  * @brief Custom allocator hooks. All fields optional (NULL → use libc).
  * @note  realloc receives old_size to support arena-style backing stores.
@@ -278,10 +248,6 @@ typedef struct {
     JsonAllocator   backing;
 } JsonArena;
 
-/* ============================================================================
- * §9  SERIALIZER OPTIONS
- * ============================================================================ */
-
 typedef struct {
     bool     pretty;        /**< Enable indented, multi-line output         */
     uint32_t indent;        /**< Spaces per level (default: 2)              */
@@ -290,11 +256,11 @@ typedef struct {
     bool     trailing_nl;   /**< Append '\n' at end                        */
 } JsonWriteOpts;
 
-/* ============================================================================
- * §10  PUBLIC API DECLARATIONS
- * ============================================================================ */
-
 /* --- Arena --- */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * @brief  Create arena. Pass NULL allocator to use libc malloc/free/realloc.
@@ -317,6 +283,9 @@ void json_arena_destroy(JsonArena* arena);
  */
 void json_arena_reset(JsonArena* arena);
 
+/* Invalidate values and release retained blocks except the initial block. */
+void json_arena_trim(JsonArena* arena);
+
 /**
  * @brief  Low-level aligned allocation from arena.
  * @return Pointer to zeroed memory, or NULL on OOM.
@@ -326,21 +295,9 @@ void* json_arena_alloc(JsonArena* arena, size_t size);
 
 /* --- Parsing --- */
 
-/**
- * @brief  Parse JSON from buffer. Result lives in arena.
- * @param  arena    Destination arena (must not be NULL).
- * @param  src      Input buffer (need not be NUL-terminated).
- * @param  len      Length of src in bytes.
- * @param  err_out  If non-NULL, receives error code on failure.
- * @return Root JsonValue*, or NULL on error.
- *
- * @pre    arena != NULL
- * @pre    src != NULL || len == 0
- * @post   On success, returned pointer is valid until arena_destroy/reset.
- *
- * @note   WCET depends on input size and JSON_MAX_DEPTH.
- *         Depth-limited to JSON_MAX_DEPTH to prevent stack exhaustion.
- */
+/* Parse exactly len bytes, without requiring a trailing NUL. Results belong
+ * to arena until reset/trim/destroy. Returns NULL and sets err_out on failure.
+ * Parsing appends allocations; reset first when replacing a document. */
 JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
                       JsonError* err_out);
 
@@ -467,19 +424,12 @@ bool        json_equal(const JsonValue* a, const JsonValue* b);
 /* Clone value into another arena */
 JsonValue*  json_clone(JsonArena* dst, const JsonValue* src);
 
-
-/* ============================================================================
- * §11  IMPLEMENTATION
- * ============================================================================ */
-
 #ifdef JSON_IMPLEMENTATION
 
 #ifndef JSON_NO_STDLIB
 #  include <stdlib.h>   /* malloc, free, realloc */
 #  include <stdio.h>    /* snprintf              */
 #endif
-
-/* ── §11.1  Default libc allocator ─────────────────────────────────────── */
 
 static void* json__libc_alloc(void* ctx, size_t sz)
 {
@@ -504,17 +454,10 @@ static const JsonAllocator k_libc_alloc = {
     NULL
 };
 
-/* ── §11.2  Arena implementation ────────────────────────────────────────── */
-
-/**
- * @brief  Align sz up to JSON_ARENA_ALIGN boundary.
- * @note   JSON_ARENA_ALIGN MUST be a power of two.
- */
 JSON_INLINE size_t json__align_up(size_t sz)
 {
-    /* DESIGN: Power-of-2 alignment allows bitwise AND instead of modulo.
-     *         WCET: O(1), 2 instructions on ARM Cortex-M. */
-    return (sz + (JSON_ARENA_ALIGN - 1U)) & ~(JSON_ARENA_ALIGN - 1U);
+
+    return (sz + (size_t)(JSON_ARENA_ALIGN - 1U)) & ~(size_t)(JSON_ARENA_ALIGN - 1U);
 }
 
 static JsonArenaBlock* json__block_new(JsonArena* arena, size_t min_size)
@@ -526,6 +469,11 @@ static JsonArenaBlock* json__block_new(JsonArena* arena, size_t min_size)
     JSON_ASSERT(arena != NULL);
 
     header_sz = json__align_up(sizeof(JsonArenaBlock));
+
+    if (min_size > (size_t)-1 - header_sz ||
+        min_size + header_sz > (size_t)-1 - (JSON_ARENA_ALIGN - 1U)) {
+        return NULL;
+    }
 
     /* Ensure block fits header + requested data */
     block_sz = (min_size + header_sz > arena->block_size)
@@ -614,6 +562,20 @@ void json_arena_reset(JsonArena* arena)
     arena->node_count  = 0U;
 }
 
+void json_arena_trim(JsonArena* arena)
+{
+    JsonArenaBlock* block;
+    if (arena == NULL) { return; }
+    block = arena->first->next;
+    while (block != NULL) {
+        JsonArenaBlock* next = block->next;
+        arena->backing.free(arena->backing.ctx, block);
+        block = next;
+    }
+    arena->first->next = NULL;
+    json_arena_reset(arena);
+}
+
 static void* json__arena_alloc_raw(JsonArena* arena, size_t size, bool zero_fill)
 {
     size_t aligned_size;
@@ -625,7 +587,9 @@ static void* json__arena_alloc_raw(JsonArena* arena, size_t size, bool zero_fill
     aligned_size = json__align_up(size);
     if (JSON_UNLIKELY(aligned_size < size)) { return NULL; }
 
-    if (JSON_LIKELY(arena->current->used + aligned_size <= arena->current->cap)) {
+    if (aligned_size > (size_t)-1 - arena->total_bytes) { return NULL; }
+
+    if (JSON_LIKELY(aligned_size <= arena->current->cap - arena->current->used)) {
         ptr = json__block_data(arena->current) + arena->current->used;
         arena->current->used += aligned_size;
         arena->total_bytes   += aligned_size;
@@ -633,14 +597,23 @@ static void* json__arena_alloc_raw(JsonArena* arena, size_t size, bool zero_fill
         return ptr;
     }
 
-    new_blk = json__block_new(arena, aligned_size);
-    if (JSON_UNLIKELY(new_blk == NULL)) { return NULL; }
-
-    arena->current->next = new_blk;
+    /* reset() retains every block. Reuse that chain before appending; replacing
+     * current->next here would orphan all remaining retained allocations. */
+    new_blk = arena->current;
+    while (new_blk->next != NULL) {
+        new_blk = new_blk->next;
+        if (aligned_size <= new_blk->cap - new_blk->used) { break; }
+    }
+    if (aligned_size > new_blk->cap - new_blk->used) {
+        JsonArenaBlock* added = json__block_new(arena, aligned_size);
+        if (JSON_UNLIKELY(added == NULL)) { return NULL; }
+        new_blk->next = added;
+        new_blk = added;
+    }
     arena->current = new_blk;
 
-    ptr = json__block_data(new_blk);
-    new_blk->used       = aligned_size;
+    ptr = json__block_data(new_blk) + new_blk->used;
+    new_blk->used      += aligned_size;
     arena->total_bytes += aligned_size;
     if (zero_fill) { JSON_MEMSET(ptr, 0, aligned_size); }
     return ptr;
@@ -656,14 +629,6 @@ void* json_arena_alloc(JsonArena* arena, size_t size)
     return json__arena_alloc_raw(arena, size, true);
 }
 
-/* ── §11.3  FNV-1a Hash ─────────────────────────────────────────────────── */
-
-/**
- * @brief  FNV-1a 32-bit hash for object key lookup.
- *         Non-cryptographic. Fast. Good distribution for short strings.
- *
- * @note   WCET: O(len). No branches inside loop.
- */
 uint32_t json_fnv1a(const char* data, size_t len)
 {
     static const uint32_t FNV_PRIME  = 0x01000193UL;
@@ -671,7 +636,7 @@ uint32_t json_fnv1a(const char* data, size_t len)
     uint32_t hash = FNV_OFFSET;
     size_t   i;
 
-    if (data == NULL) { return 0U; }
+    if (data == NULL && len != 0U) { return 0U; }
 
     for (i = 0U; i < len; i++) {
         hash ^= (uint32_t)(uint8_t)data[i];
@@ -680,28 +645,12 @@ uint32_t json_fnv1a(const char* data, size_t len)
     return hash;
 }
 
-/* ── §11.4  Introsort for object key indices ────────────────────────────── */
-
-/*
- * DESIGN: Introsort combines:
- *   - Quicksort   (median-of-3 pivot, O(n log n) average)
- *   - Heapsort    (fallback when recursion depth > 2*log2(n), O(n log n) worst)
- *   - Insertion sort (n < JSON_INTROSORT_THRESH, O(n^2) but fast for tiny n)
- *
- * This guarantees O(n log n) worst-case with excellent cache locality.
- * Uses recursion bounded by depth_limit to prevent stack overflow.
- */
-
 typedef struct {
     const JsonPair* pairs;  /* Read-only reference to pairs array */
     uint32_t*       idx;    /* The index array being sorted       */
+    bool            lexical;
 } JsonSortCtx;
 
-/**
- * @brief  Compare two key-index entries by (hash, then lexicographic).
- *         Hash comparison avoids string compare in the common (no-collision) case.
- * @return <0 if a < b, 0 if equal, >0 if a > b
- */
 JSON_INLINE int json__key_cmp(const JsonSortCtx* ctx, uint32_t a, uint32_t b)
 {
     const JsonStr* ka = &ctx->pairs[a].key;
@@ -712,13 +661,13 @@ JSON_INLINE int json__key_cmp(const JsonSortCtx* ctx, uint32_t a, uint32_t b)
     JSON_ASSERT(ctx != NULL);
 
     /* Fast path: hash mismatch */
-    if (ka->hash != kb->hash) {
+    if (!ctx->lexical && ka->hash != kb->hash) {
         return (ka->hash < kb->hash) ? -1 : 1;
     }
 
     /* Slow path: lexicographic comparison (hash collision) */
     min_len = (ka->len < kb->len) ? ka->len : kb->len;
-    cmp = JSON_MEMCMP(ka->data, kb->data, (size_t)min_len);
+    cmp = min_len ? JSON_MEMCMP(ka->data, kb->data, (size_t)min_len) : 0;
     if (cmp != 0) { return cmp; }
     if (ka->len < kb->len) { return -1; }
     if (ka->len > kb->len) { return  1; }
@@ -823,7 +772,6 @@ static void json__introsort(const JsonSortCtx* ctx, uint32_t* arr,
         /* Median-of-three pivot selection */
         mid = lo + span / 2U;
 
-        /* Sort lo, mid, hi — bring median to mid */
         if (json__key_cmp(ctx, arr[lo], arr[mid]) > 0) {
             tmp = arr[lo]; arr[lo] = arr[mid]; arr[mid] = tmp;
         }
@@ -864,11 +812,6 @@ static void json__introsort(const JsonSortCtx* ctx, uint32_t* arr,
     }
 }
 
-/**
- * @brief  Sort object's sorted_idx array and mark object as sorted.
- * @note   Idempotent: no-op if already sorted.
- * @note   WCET: O(n log n) — introsort guarantees this.
- */
 static JsonError json__obj_sort(JsonValue* obj, JsonArena* arena)
 {
     JsonObj*    o;
@@ -893,6 +836,7 @@ static JsonError json__obj_sort(JsonValue* obj, JsonArena* arena)
     }
 
     ctx.pairs = o->pairs;
+    ctx.lexical = false;
     ctx.idx   = o->sorted_idx;
 
     if (o->len > 1U) {
@@ -903,8 +847,6 @@ static JsonError json__obj_sort(JsonValue* obj, JsonArena* arena)
     o->is_sorted = true;
     return JSON_OK;
 }
-
-/* ── §11.5  Lexer ───────────────────────────────────────────────────────── */
 
 typedef enum {
     TOK_LBRACE  = '{',
@@ -953,12 +895,8 @@ static void json__lex_skip_ws(JsonLex* l)
     l->pos = p;
 }
 
-/** @brief Validate UTF-8 continuation byte. */
 JSON_INLINE bool json__is_cont(uint8_t b) { return (b & 0xC0U) == 0x80U; }
 
-/* ── §11.6  String parsing (with \uXXXX decoding) ──────────────────────── */
-
-/** @brief Hex digit to value. Returns 0xFF on invalid input. */
 JSON_INLINE uint8_t json__hex_val(char c)
 {
     if (c >= '0' && c <= '9') { return (uint8_t)(c - '0'); }
@@ -967,10 +905,6 @@ JSON_INLINE uint8_t json__hex_val(char c)
     return 0xFFU;
 }
 
-/**
- * @brief  Parse 4 hex digits into uint16_t.
- * @return true on success, false on non-hex character.
- */
 static bool json__parse_hex4(const char* s, size_t max, uint16_t* out)
 {
     uint8_t h0, h1, h2, h3;
@@ -991,8 +925,6 @@ static bool json__parse_hex4(const char* s, size_t max, uint16_t* out)
     return true;
 }
 
-/** @brief Encode Unicode code point (U+0000..U+10FFFF) as UTF-8.
- *         Writes to buf (needs at least 4 bytes). Returns bytes written. */
 static uint32_t json__encode_utf8(uint32_t cp, uint8_t* buf)
 {
     JSON_ASSERT(buf != NULL);
@@ -1019,13 +951,44 @@ static uint32_t json__encode_utf8(uint32_t cp, uint8_t* buf)
     return 0U; /* Invalid code point */
 }
 
-/**
- * @brief  Parse a JSON string (cursor past opening '"'). Decode all escapes.
- *         Result is stored as arena-allocated UTF-8. NOT NUL-terminated.
- *
- * @param[out] str  Populated with pointer+length+hash on success.
- * @return JSON_OK or error code.
- */
+static JsonError json__utf8_decode(const char* data, size_t size,
+                                    uint32_t* codepoint, size_t* consumed)
+{
+    uint8_t lead;
+    uint32_t code, minimum;
+    size_t count, i;
+    if (size == 0U) { return JSON_ERR_INVALID_UTF8; }
+    lead = (uint8_t)data[0];
+    if (lead < 0x80U) { *codepoint = lead; *consumed = 1U; return JSON_OK; }
+    if (lead >= 0xC2U && lead <= 0xDFU) { count = 2U; code = lead & 31U; minimum = 0x80U; }
+    else if (lead >= 0xE0U && lead <= 0xEFU) { count = 3U; code = lead & 15U; minimum = 0x800U; }
+    else if (lead >= 0xF0U && lead <= 0xF4U) { count = 4U; code = lead & 7U; minimum = 0x10000U; }
+    else { return JSON_ERR_INVALID_UTF8; }
+    if (count > size) { return JSON_ERR_INVALID_UTF8; }
+    for (i = 1U; i < count; i++) {
+        uint8_t next = (uint8_t)data[i];
+        if ((next & 0xC0U) != 0x80U) { return JSON_ERR_INVALID_UTF8; }
+        code = (code << 6U) | (next & 63U);
+    }
+    if (code < minimum || code > 0x10FFFFU || (code >= 0xD800U && code <= 0xDFFFU)) {
+        return JSON_ERR_INVALID_UTF8;
+    }
+    *codepoint = code; *consumed = count;
+    return JSON_OK;
+}
+
+static bool json__valid_utf8(const char* data, size_t size)
+{
+    size_t offset = 0U;
+    while (offset < size) {
+        size_t count;
+        uint32_t code;
+        if (json__utf8_decode(data + offset, size - offset, &code, &count) != JSON_OK) { return false; }
+        offset += count;
+    }
+    return true;
+}
+
 static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
 {
     /* Two-pass: first measure, then allocate+copy.
@@ -1040,7 +1003,6 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
 
     JSON_ASSERT(l != NULL && arena != NULL && str != NULL);
 
-    /* ── Pass 1: Measure output length ─── */
     scan_pos = l->pos;
     while (scan_pos < l->len) {
         uint8_t c = (uint8_t)l->src[scan_pos];
@@ -1071,7 +1033,6 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
                     }
                     scan_pos += 4U;
                     if (hi_cp >= 0xD800U && hi_cp <= 0xDBFFU) {
-                        /* High surrogate — expect low surrogate */
                         uint16_t lo_cp;
                         if (scan_pos + 1U >= l->len ||
                             l->src[scan_pos] != '\\' ||
@@ -1092,16 +1053,10 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
                         }
                         out_len += 4U; /* UTF-8 for supplementary plane */
                     } else if (hi_cp >= 0xDC00U && hi_cp <= 0xDFFFU) {
-                        /* Lone low surrogate — invalid */
                         l->err = JSON_ERR_INVALID_STRING;
                         return JSON_ERR_INVALID_STRING;
                     } else {
-                        /* DESIGN: exact byte count, not a constant 3.
-                         *   U+0000–U+007F  → 1 byte
-                         *   U+0080–U+07FF  → 2 bytes
-                         *   U+0800–U+FFFF  → 3 bytes
-                         * Using the maximum (3) over-allocates and corrupts
-                         * str->len, breaking key lookup and equality. */
+
                         out_len += (hi_cp < 0x80U) ? 1U
                                  : (hi_cp < 0x800U) ? 2U : 3U;
                     }
@@ -1115,6 +1070,18 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
             /* Control chars must be escaped */
             l->err = JSON_ERR_INVALID_STRING;
             return JSON_ERR_INVALID_STRING;
+        } else if (c >= 0x80U) {
+            size_t count, i;
+            uint32_t code;
+            if (json__utf8_decode(l->src + scan_pos, l->len - scan_pos, &code, &count) != JSON_OK) {
+                l->err = JSON_ERR_INVALID_UTF8;
+                return l->err;
+            }
+            for (i = 0U; i < count; i++) {
+                raw_hash = (raw_hash ^ (uint8_t)l->src[scan_pos + i]) * 0x01000193UL;
+            }
+            out_len += count;
+            scan_pos += count;
         } else {
             raw_hash ^= (uint32_t)c;
             raw_hash *= 0x01000193UL;
@@ -1133,7 +1100,6 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
         return JSON_ERR_OVERFLOW;
     }
 
-    /* ── Pass 2: Allocate and decode ─── */
     out_buf = (out_len > 0U)
               ? (char*)json__arena_alloc_uninit(arena, out_len)
               : NULL;
@@ -1147,7 +1113,6 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
     l->pos    = start_pos;
 
     if (!has_escape) {
-        /* Fast path: no escapes — memcpy and validate UTF-8 */
         if (out_len > 0U) {
             JSON_MEMCPY(out_buf, l->src + l->pos, out_len);
         }
@@ -1212,8 +1177,6 @@ static JsonError json__parse_string(JsonLex* l, JsonArena* arena, JsonStr* str)
     return JSON_OK;
 }
 
-/* ── §11.7  Number parsing ──────────────────────────────────────────────── */
-
 static bool json__fast_float_from_parts(uint64_t mant, uint32_t sig,
                                          int32_t exp10, bool neg,
                                          double* out)
@@ -1244,14 +1207,6 @@ static bool json__fast_float_from_parts(uint64_t mant, uint32_t sig,
     return true;
 }
 
-/**
- * @brief  Parse JSON number. Detects integer vs float at parse time.
- *
- * Grammar: -? (0 | [1-9][0-9]*) (.[0-9]+)? ([eE][+-]?[0-9]+)?
- *
- * DESIGN: Parse as integer if no '.' or 'e'/'E'. Use a small fast decimal
- *         path for common floats and fall back to strtod for hard cases.
- */
 static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
                                     JsonValue* out)
 {
@@ -1413,16 +1368,6 @@ static JsonError json__parse_number(JsonLex* l, JsonArena* arena,
 
 #undef JSON__FAST_DIGIT
 
-/* ── §11.8  Iterative Parser ────────────────────────────────────────────── */
-
-/*
- * DESIGN: Recursive descent is simpler but risks stack overflow on deeply
- * nested input. This iterative implementation uses an explicit heap-allocated
- * parse stack with bounded depth (JSON_MAX_DEPTH), making stack usage O(1)
- * regardless of nesting depth. WCET is O(n * JSON_MAX_DEPTH) in theory,
- * O(n) in practice since depth is constant.
- */
-
 typedef enum {
     PS_VALUE,       /* Expecting any value                      */
     PS_ARR_ITEM,    /* Inside array: expecting value or ']'     */
@@ -1439,10 +1384,6 @@ typedef struct {
     JsonStr      pending_key; /* For PS_OBJ_VAL: key waiting for its value */
 } ParseFrame;
 
-/**
- * @brief  Allocate and initialize a new JsonValue node.
- * @note   Node count is tracked and bounded by JSON_MAX_NODES.
- */
 static JsonValue* json__new_node(JsonArena* arena)
 {
     JsonValue* v;
@@ -1450,11 +1391,7 @@ static JsonValue* json__new_node(JsonArena* arena)
     JSON_ASSERT(arena != NULL);
 
     if (JSON_UNLIKELY(arena->node_count >= JSON_MAX_NODES)) { return NULL; }
-    /* Zero the node: json_make_object()/json_make_array() only set .type and
-     * rely on the JsonObj/JsonArr members starting at 0. The uninitialized
-     * allocator left len/cap/pairs/sorted_idx indeterminate, so the first
-     * json_obj_set()/json_arr_push() on a freshly built container read
-     * garbage (undefined behavior). */
+    /* Container constructors depend on zero-initialized lengths and pointers. */
     v = (JsonValue*)json_arena_alloc(arena, sizeof(JsonValue));
     if (JSON_LIKELY(v != NULL)) {
         arena->node_count++;
@@ -1462,7 +1399,6 @@ static JsonValue* json__new_node(JsonArena* arena)
     return v;
 }
 
-/** @brief Grow array capacity (doubling strategy). */
 static JsonError json__arr_grow(JsonArr* a, JsonArena* arena)
 {
     uint32_t  new_cap;
@@ -1474,7 +1410,9 @@ static JsonError json__arr_grow(JsonArr* a, JsonArena* arena)
 
     /* Overflow guard */
     if (JSON_UNLIKELY(new_cap < a->cap)) { return JSON_ERR_OVERFLOW; }
-    if (JSON_UNLIKELY(new_cap > JSON_MAX_ARRAY_LEN)) { return JSON_ERR_OVERFLOW; }
+    if (a->cap >= JSON_MAX_ARRAY_LEN) { return JSON_ERR_OVERFLOW; }
+    if (new_cap > JSON_MAX_ARRAY_LEN) { new_cap = JSON_MAX_ARRAY_LEN; }
+    if (((size_t)new_cap * sizeof(JsonValue*)) / sizeof(JsonValue*) != new_cap) { return JSON_ERR_OVERFLOW; }
 
     new_items = (JsonValue**)json__arena_alloc_uninit(arena,
                     (size_t)new_cap * sizeof(JsonValue*));
@@ -1488,7 +1426,6 @@ static JsonError json__arr_grow(JsonArr* a, JsonArena* arena)
     return JSON_OK;
 }
 
-/** @brief Grow object capacity (doubling strategy). */
 static JsonError json__obj_grow(JsonObj* o, JsonArena* arena)
 {
     uint32_t  new_cap;
@@ -1498,6 +1435,9 @@ static JsonError json__obj_grow(JsonObj* o, JsonArena* arena)
 
     new_cap = (o->cap == 0U) ? 8U : o->cap * 2U;
     if (JSON_UNLIKELY(new_cap < o->cap)) { return JSON_ERR_OVERFLOW; }
+    if (o->cap >= JSON_MAX_ARRAY_LEN) { return JSON_ERR_OVERFLOW; }
+    if (new_cap > JSON_MAX_ARRAY_LEN) { new_cap = JSON_MAX_ARRAY_LEN; }
+    if (((size_t)new_cap * sizeof(JsonPair)) / sizeof(JsonPair) != new_cap) { return JSON_ERR_OVERFLOW; }
 
     new_pairs = (JsonPair*)json__arena_alloc_uninit(arena,
                     (size_t)new_cap * sizeof(JsonPair));
@@ -1513,11 +1453,6 @@ static JsonError json__obj_grow(JsonObj* o, JsonArena* arena)
     return JSON_OK;
 }
 
-/**
- * @brief  Main iterative parser.
- * @note   All error paths set err_out before returning NULL.
- * @note   WCET: O(n) where n = input length.
- */
 JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
                       JsonError* err_out)
 {
@@ -1576,7 +1511,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
 
         switch (frame->state) {
 
-        /* ── Expecting a value (any type) ─────────────────────────────── */
         case PS_VALUE: {
             char c = lex.src[lex.pos];
             JsonValue* node = json__new_node(arena);
@@ -1671,15 +1605,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
                     goto deliver_to_parent;
                 }
 
-                /*
-                 * DESIGN: this frame has been transformed in-place to
-                 * PS_OBJ_KEY.  The main loop will execute case PS_OBJ_KEY on
-                 * the next iteration — no extra frame push is needed.
-                 * Pushing a second PS_OBJ_KEY frame here (as done before this
-                 * fix) left stack[depth-1] as PS_OBJ_KEY when the closing '}'
-                 * tried to deliver the object to its parent, causing an
-                 * "invalid JSON" error on every non-empty object.
-                 */
                 continue;
 
             } else {
@@ -1733,7 +1658,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
             break;
         } /* PS_VALUE */
 
-        /* ── After array item: ',' or ']' ─────────────────────────────── */
         case PS_ARR_CONT: {
             char c = lex.src[lex.pos];
             if (c == ']') {
@@ -1789,7 +1713,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
             break;
         }
 
-        /* ── Object: expecting key ─────────────────────────────────────── */
         case PS_OBJ_KEY: {
             char c = lex.src[lex.pos];
             if (c == '"') {
@@ -1805,7 +1728,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
             break;
         }
 
-        /* ── After object key: expect ':' ─────────────────────────────── */
         case PS_OBJ_COLON: {
             if (lex.src[lex.pos] != ':') {
                 err = JSON_ERR_INVALID_JSON; goto parse_error;
@@ -1822,7 +1744,6 @@ JsonValue* json_parse(JsonArena* arena, const char* src, size_t len,
             break;
         }
 
-        /* ── After object value: ',' or '}' ───────────────────────────── */
         case PS_OBJ_CONT: {
             char c = lex.src[lex.pos];
             if (c == '}') {
@@ -1903,8 +1824,6 @@ JsonValue* json_parse_cstr(JsonArena* arena, const char* src, JsonError* err_out
     return json_parse(arena, src, JSON_STRLEN(src), err_out);
 }
 
-/* ── §11.9  Type-safe accessors ─────────────────────────────────────────── */
-
 #define JSON__CHECK_V(v)  do { if ((v) == NULL) return JSON_ERR_NULL_PARAM; } while(0)
 #define JSON__CHECK_OUT(o) do { if ((o) == NULL) return JSON_ERR_NULL_PARAM; } while(0)
 
@@ -1920,7 +1839,12 @@ JsonError json_get_int(const JsonValue* v, int64_t* out)
 {
     JSON__CHECK_V(v); JSON__CHECK_OUT(out);
     if (v->type == JSON_INTEGER) { *out = v->v.i; return JSON_OK; }
-    if (v->type == JSON_FLOAT)   { *out = (int64_t)v->v.f; return JSON_OK; }
+    if (v->type == JSON_FLOAT) {
+        if (isnan(v->v.f) || v->v.f < -9223372036854775808.0 ||
+            v->v.f >= 9223372036854775808.0) { return JSON_ERR_OVERFLOW; }
+        *out = (int64_t)v->v.f;
+        return JSON_OK;
+    }
     return JSON_ERR_TYPE_MISMATCH;
 }
 
@@ -1982,7 +1906,9 @@ JsonError json_obj_get_n(const JsonValue* v, const char* key, size_t klen,
     uint32_t       idx;
 
     JSON__CHECK_V(v); JSON__CHECK_OUT(out);
-    if (key == NULL)               { return JSON_ERR_NULL_PARAM; }
+    if (key == NULL && klen != 0U) { return JSON_ERR_NULL_PARAM; }
+    if (klen > UINT32_MAX)         { return JSON_ERR_OVERFLOW; }
+    if (key == NULL)               { key = ""; }
     if (v->type != JSON_OBJECT)    { return JSON_ERR_TYPE_MISMATCH; }
 
     o = &v->v.o;
@@ -1995,7 +1921,7 @@ JsonError json_obj_get_n(const JsonValue* v, const char* key, size_t klen,
         for (i = 0U; i < o->len; i++) {
             const JsonStr* k = &o->pairs[i].key;
             if (k->hash == hash && k->len == (uint32_t)klen &&
-                JSON_MEMCMP(k->data, key, klen) == 0) {
+                (klen == 0U || JSON_MEMCMP(k->data, key, klen) == 0)) {
                 *out = o->pairs[i].val;
                 return JSON_OK;
             }
@@ -2019,7 +1945,7 @@ JsonError json_obj_get_n(const JsonValue* v, const char* key, size_t klen,
         } else {
             /* Hash match: compare lexicographically */
             uint32_t min_len = (k->len < (uint32_t)klen) ? k->len : (uint32_t)klen;
-            cmp = JSON_MEMCMP(k->data, key, (size_t)min_len);
+            cmp = min_len ? JSON_MEMCMP(k->data, key, (size_t)min_len) : 0;
             if (cmp == 0) {
                 if (k->len < (uint32_t)klen) { cmp = -1; }
                 else if (k->len > (uint32_t)klen) { cmp = 1; }
@@ -2056,8 +1982,6 @@ JsonError json_obj_iter(const JsonValue* v, uint32_t idx,
     if (val_out != NULL) { *val_out = v->v.o.pairs[idx].val;      }
     return JSON_OK;
 }
-
-/* ── §11.10  Path query ─────────────────────────────────────────────────── */
 
 JsonValue* json_path(const JsonValue* root, const char* path, JsonError* err_out)
 {
@@ -2100,9 +2024,11 @@ JsonValue* json_path(const JsonValue* root, const char* path, JsonError* err_out
                 /* [N] */
                 uint32_t idx = 0U;
                 while (*p >= '0' && *p <= '9') {
-                    uint32_t prev = idx;
-                    idx = idx * 10U + (uint32_t)(*p - '0');
-                    if (idx < prev) { err = JSON_ERR_OVERFLOW; goto fail; }
+                    uint32_t digit = (uint32_t)(*p - '0');
+                    if (idx > (UINT32_MAX - digit) / 10U) {
+                        err = JSON_ERR_OVERFLOW; goto fail;
+                    }
+                    idx = idx * 10U + digit;
                     p++;
                 }
                 if (*p != ']') { err = JSON_ERR_INVALID_JSON; goto fail; }
@@ -2142,20 +2068,20 @@ fail:
     return NULL;
 }
 
-/* ── §11.11  Serializer ─────────────────────────────────────────────────── */
-
 typedef struct {
     char*    buf;
     size_t   cap;
     size_t   used;
     bool     measure_only; /* When true: just count, don't write */
     JsonError err;
+    JsonArena* sort_arena;
 } JsonWriter;
 
 JSON_INLINE JsonError jw_put(JsonWriter* w, char c)
 {
+    if (w->used == (size_t)-1) { w->err = JSON_ERR_OVERFLOW; return w->err; }
     if (w->measure_only) { w->used++; return JSON_OK; }
-    if (w->used >= w->cap - 1U) { w->err = JSON_ERR_BUFFER_TOO_SMALL; return JSON_ERR_BUFFER_TOO_SMALL; }
+    if (w->cap == 0U || w->used >= w->cap - 1U) { w->err = JSON_ERR_BUFFER_TOO_SMALL; return JSON_ERR_BUFFER_TOO_SMALL; }
     w->buf[w->used++] = c;
     return JSON_OK;
 }
@@ -2163,6 +2089,7 @@ JSON_INLINE JsonError jw_put(JsonWriter* w, char c)
 static JsonError jw_puts(JsonWriter* w, const char* s, size_t n)
 {
     size_t i;
+    if (n > (size_t)-1 - w->used) { w->err = JSON_ERR_OVERFLOW; return w->err; }
     if (w->measure_only) { w->used += n; return JSON_OK; }
     for (i = 0U; i < n; i++) {
         if (jw_put(w, s[i]) != JSON_OK) { return JSON_ERR_BUFFER_TOO_SMALL; }
@@ -2172,10 +2099,17 @@ static JsonError jw_puts(JsonWriter* w, const char* s, size_t n)
 
 static JsonError jw_indent(JsonWriter* w, uint32_t depth, uint32_t indent_sz)
 {
-    uint32_t i;
-    for (i = 0U; i < depth * indent_sz; i++) {
-        if (jw_put(w, ' ') != JSON_OK) { return JSON_ERR_BUFFER_TOO_SMALL; }
+    size_t count = (size_t)depth * indent_sz;
+    if ((depth != 0U && count / depth != indent_sz) || count > (size_t)-1 - w->used) {
+        w->err = JSON_ERR_OVERFLOW; return w->err;
     }
+    if (!w->measure_only) {
+        if (w->cap == 0U || w->used >= w->cap || count >= w->cap - w->used) {
+            w->err = JSON_ERR_BUFFER_TOO_SMALL; return w->err;
+        }
+        JSON_MEMSET(w->buf + w->used, ' ', count);
+    }
+    w->used += count;
     return JSON_OK;
 }
 
@@ -2219,6 +2153,7 @@ static JsonError jw_double(JsonWriter* w, double v)
 {
     char   tmp[32];
     size_t len;
+    if (isnan(v) || isinf(v)) { return JSON_ERR_INVALID_NUMBER; }
 
 #ifndef JSON_NO_STDLIB
     /* Use snprintf for correct double rendering */
@@ -2252,6 +2187,15 @@ static JsonError jw_double(JsonWriter* w, double v)
 }
 
 /* Write escaped JSON string content (no surrounding quotes) */
+static JsonError jw_u16(JsonWriter* w, uint16_t code)
+{
+    static const char hex[] = "0123456789abcdef";
+    char escaped[6] = {'\\', 'u', 0, 0, 0, 0};
+    unsigned i;
+    for (i = 0U; i < 4U; i++) { escaped[2U + i] = hex[(code >> (12U - 4U * i)) & 15U]; }
+    return jw_puts(w, escaped, sizeof escaped);
+}
+
 static JsonError jw_string_content(JsonWriter* w, const char* s, uint32_t len,
                                    bool ascii_only)
 {
@@ -2259,6 +2203,23 @@ static JsonError jw_string_content(JsonWriter* w, const char* s, uint32_t len,
 
     while (i < len) {
         uint8_t c = (uint8_t)s[i];
+
+        if (c >= 0x80U) {
+            uint32_t code;
+            size_t count;
+            JsonError status = json__utf8_decode(s + i, len - i, &code, &count);
+            if (status != JSON_OK) { w->err = status; return status; }
+            if (!ascii_only) { status = jw_puts(w, s + i, count); }
+            else if (code <= 0xFFFFU) { status = jw_u16(w, (uint16_t)code); }
+            else {
+                code -= 0x10000U;
+                status = jw_u16(w, (uint16_t)(0xD800U + (code >> 10U)));
+                if (status == JSON_OK) { status = jw_u16(w, (uint16_t)(0xDC00U + (code & 1023U))); }
+            }
+            if (status != JSON_OK) { return status; }
+            i += (uint32_t)count;
+            continue;
+        }
 
         if (c < 0x20U || c == '"' || c == '\\' ||
             (ascii_only && c >= 0x80U)) {
@@ -2289,7 +2250,6 @@ static JsonError jw_string_content(JsonWriter* w, const char* s, uint32_t len,
     return w->err;
 }
 
-/** @brief Core recursive serializer. Uses C stack but depth is bounded at parse time. */
 static JsonError json__write_value(JsonWriter* w, const JsonValue* v,
                                    uint32_t depth,
                                    const JsonWriteOpts* opts)
@@ -2297,6 +2257,8 @@ static JsonError json__write_value(JsonWriter* w, const JsonValue* v,
     JsonError err;
 
     JSON_ASSERT(v != NULL && opts != NULL);
+
+    if (depth >= JSON_MAX_DEPTH) { return JSON_ERR_DEPTH_EXCEEDED; }
 
     switch (v->type) {
     case JSON_NULL:
@@ -2346,11 +2308,23 @@ static JsonError json__write_value(JsonWriter* w, const JsonValue* v,
     case JSON_OBJECT: {
         const JsonObj* o = &v->v.o;
         uint32_t i;
+        uint32_t* order = NULL;
+        if (opts->sort_keys && !w->measure_only && o->len > 1U) {
+            JsonSortCtx context;
+            uint32_t depth_limit = 0U, count = o->len;
+            if (!w->sort_arena) { w->sort_arena = json_arena_create(NULL, 4096); }
+            if (!w->sort_arena) { return JSON_ERR_OOM; }
+            order = (uint32_t*)json__arena_alloc_uninit(w->sort_arena, (size_t)o->len * sizeof *order);
+            if (!order) { return JSON_ERR_OOM; }
+            for (i = 0U; i < o->len; i++) { order[i] = i; }
+            while (count > 1U) { depth_limit++; count >>= 1U; }
+            context.pairs = o->pairs; context.idx = order; context.lexical = true;
+            json__introsort(&context, order, 0U, o->len - 1U, 2U * depth_limit);
+        }
         err = jw_put(w, '{');
         if (err != JSON_OK) { return err; }
         for (i = 0U; i < o->len; i++) {
-            uint32_t pair_idx = (opts->sort_keys && o->is_sorted && o->sorted_idx)
-                                ? o->sorted_idx[i] : i;
+            uint32_t pair_idx = order ? order[i] : i;
             const JsonPair* pair = &o->pairs[pair_idx];
             if (opts->pretty) {
                 jw_put(w, '\n');
@@ -2400,20 +2374,18 @@ JsonError json_write(const JsonValue* v, char* buf, size_t buf_size,
 
     err = json__write_value(&w, v, 0U, opts);
 
+    if (err == JSON_OK && opts->trailing_nl) { err = jw_put(&w, '\n'); }
     if (err == JSON_OK && !w.measure_only) {
         /* NUL-terminate */
         if (w.used < buf_size) {
             buf[w.used] = '\0';
         } else {
-            return JSON_ERR_BUFFER_TOO_SMALL;
-        }
-        if (opts->trailing_nl && w.used + 1U < buf_size) {
-            buf[w.used++] = '\n';
-            buf[w.used]   = '\0';
+            err = JSON_ERR_BUFFER_TOO_SMALL;
         }
     }
 
     if (written != NULL) { *written = w.used; }
+    json_arena_destroy(w.sort_arena);
     return err;
 }
 
@@ -2438,7 +2410,8 @@ JsonError json_write_arena(const JsonValue* v, JsonArena* arena,
     err = json_measure(v, &needed, opts);
     if (err != JSON_OK) { return err; }
 
-    needed += 2U; /* NUL + optional newline */
+    if (needed == (size_t)-1) { return JSON_ERR_OVERFLOW; }
+    needed += 1U; /* json_measure includes the optional newline, not the NUL. */
 
     buf = (char*)json__arena_alloc_uninit(arena, needed);
     if (JSON_UNLIKELY(buf == NULL)) { return JSON_ERR_OOM; }
@@ -2449,8 +2422,6 @@ JsonError json_write_arena(const JsonValue* v, JsonArena* arena,
     *out = buf;
     return JSON_OK;
 }
-
-/* ── §11.12  Value construction ─────────────────────────────────────────── */
 
 JsonValue* json_make_null(JsonArena* arena)
 {
@@ -2488,7 +2459,8 @@ JsonValue* json_make_string(JsonArena* arena, const char* s, uint32_t len)
     JsonValue* v;
     char*      copy;
 
-    if (arena == NULL) { return NULL; }
+    if (arena == NULL || len > JSON_MAX_STRING_LEN ||
+        (len > 0U && (s == NULL || !json__valid_utf8(s, len)))) { return NULL; }
     v = json__new_node(arena);
     if (v == NULL) { return NULL; }
 
@@ -2513,8 +2485,11 @@ JsonValue* json_make_string(JsonArena* arena, const char* s, uint32_t len)
 
 JsonValue* json_make_stringz(JsonArena* arena, const char* s)
 {
+    size_t length;
     if (s == NULL) { return json_make_string(arena, NULL, 0U); }
-    return json_make_string(arena, s, (uint32_t)JSON_STRLEN(s));
+    length = JSON_STRLEN(s);
+    if (length > UINT32_MAX) { return NULL; }
+    return json_make_string(arena, s, (uint32_t)length);
 }
 
 JsonValue* json_make_array(JsonArena* arena)
@@ -2555,10 +2530,13 @@ JsonError json_obj_set(JsonValue* obj, JsonArena* arena,
     JsonError err;
     char*     key_copy;
 
-    if (obj == NULL || arena == NULL || key == NULL || val == NULL) {
+    if (obj == NULL || arena == NULL || (key == NULL && klen != 0U) || val == NULL) {
         return JSON_ERR_NULL_PARAM;
     }
     if (obj->type != JSON_OBJECT) { return JSON_ERR_TYPE_MISMATCH; }
+    if (key == NULL) { key = ""; }
+    if (klen > JSON_MAX_STRING_LEN) { return JSON_ERR_OVERFLOW; }
+    if (!json__valid_utf8(key, klen)) { return JSON_ERR_INVALID_UTF8; }
 
     o = &obj->v.o;
 
@@ -2569,7 +2547,7 @@ JsonError json_obj_set(JsonValue* obj, JsonArena* arena,
         for (i = 0U; i < o->len; i++) {
             JsonStr* k = &o->pairs[i].key;
             if (k->hash == hash && k->len == klen &&
-                JSON_MEMCMP(k->data, key, klen) == 0) {
+                (klen == 0U || JSON_MEMCMP(k->data, key, klen) == 0)) {
                 o->pairs[i].val = val;
                 return JSON_OK;
             }
@@ -2582,9 +2560,9 @@ JsonError json_obj_set(JsonValue* obj, JsonArena* arena,
         if (err != JSON_OK) { return err; }
     }
 
-    key_copy = (char*)json__arena_alloc_uninit(arena, (size_t)klen);
-    if (JSON_UNLIKELY(key_copy == NULL)) { return JSON_ERR_OOM; }
-    JSON_MEMCPY(key_copy, key, klen);
+    key_copy = klen ? (char*)json__arena_alloc_uninit(arena, (size_t)klen) : NULL;
+    if (klen && JSON_UNLIKELY(key_copy == NULL)) { return JSON_ERR_OOM; }
+    if (klen) { JSON_MEMCPY(key_copy, key, klen); }
 
     o->pairs[o->len].key.data = key_copy;
     o->pairs[o->len].key.len  = klen;
@@ -2598,17 +2576,19 @@ JsonError json_obj_set(JsonValue* obj, JsonArena* arena,
 JsonError json_obj_setz(JsonValue* obj, JsonArena* arena,
                         const char* key, JsonValue* val)
 {
+    size_t length;
     if (key == NULL) { return JSON_ERR_NULL_PARAM; }
-    return json_obj_set(obj, arena, key, (uint32_t)JSON_STRLEN(key), val);
+    length = JSON_STRLEN(key);
+    if (length > UINT32_MAX) { return JSON_ERR_OVERFLOW; }
+    return json_obj_set(obj, arena, key, (uint32_t)length, val);
 }
 
-/* ── §11.13  Equality & Clone ───────────────────────────────────────────── */
-
-bool json_equal(const JsonValue* a, const JsonValue* b)
+static bool json__equal(const JsonValue* a, const JsonValue* b, uint32_t depth)
 {
     uint32_t i;
 
     if (a == b)   { return true; }
+    if (depth >= JSON_MAX_DEPTH) { return false; }
     if (!a || !b) { return false; }
     if (a->type != b->type) {
         /* Allow integer/float cross-comparison */
@@ -2629,11 +2609,11 @@ bool json_equal(const JsonValue* a, const JsonValue* b)
     case JSON_STRING:
         if (a->v.s.len != b->v.s.len) { return false; }
         if (a->v.s.hash != b->v.s.hash) { return false; }
-        return JSON_MEMCMP(a->v.s.data, b->v.s.data, a->v.s.len) == 0;
+        return a->v.s.len == 0U || JSON_MEMCMP(a->v.s.data, b->v.s.data, a->v.s.len) == 0;
     case JSON_ARRAY:
         if (a->v.a.len != b->v.a.len) { return false; }
         for (i = 0U; i < a->v.a.len; i++) {
-            if (!json_equal(a->v.a.items[i], b->v.a.items[i])) { return false; }
+            if (!json__equal(a->v.a.items[i], b->v.a.items[i], depth + 1U)) { return false; }
         }
         return true;
     case JSON_OBJECT:
@@ -2645,19 +2625,21 @@ bool json_equal(const JsonValue* a, const JsonValue* b)
             if (json_obj_get_n(b, k->data, k->len, &bval) != JSON_OK) {
                 return false;
             }
-            if (!json_equal(a->v.o.pairs[i].val, bval)) { return false; }
+            if (!json__equal(a->v.o.pairs[i].val, bval, depth + 1U)) { return false; }
         }
         return true;
     default: return false;
     }
 }
 
-JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
+bool json_equal(const JsonValue* a, const JsonValue* b) { return json__equal(a, b, 0U); }
+
+static JsonValue* json__clone(JsonArena* dst, const JsonValue* src, uint32_t depth)
 {
     JsonValue* out;
     uint32_t   i;
 
-    if (dst == NULL || src == NULL) { return NULL; }
+    if (dst == NULL || src == NULL || depth >= JSON_MAX_DEPTH) { return NULL; }
 
     out = json__new_node(dst);
     if (out == NULL) { return NULL; }
@@ -2692,7 +2674,7 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
                             sa->len * sizeof(JsonValue*));
             if (da->items == NULL) { return NULL; }
             for (i = 0U; i < sa->len; i++) {
-                da->items[i] = json_clone(dst, sa->items[i]);
+                da->items[i] = json__clone(dst, sa->items[i], depth + 1U);
                 if (da->items[i] == NULL) { return NULL; }
             }
         }
@@ -2721,7 +2703,7 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
                 do_->pairs[i].key.data = kc;
                 do_->pairs[i].key.len  = sk->len;
                 do_->pairs[i].key.hash = sk->hash;
-                do_->pairs[i].val = json_clone(dst, so->pairs[i].val);
+                do_->pairs[i].val = json__clone(dst, so->pairs[i].val, depth + 1U);
                 if (do_->pairs[i].val == NULL) { return NULL; }
             }
         }
@@ -2732,23 +2714,14 @@ JsonValue* json_clone(JsonArena* dst, const JsonValue* src)
     return out;
 }
 
-/* ── §11.14  Object sort (public trigger) ───────────────────────────────── */
+JsonValue* json_clone(JsonArena* dst, const JsonValue* src) { return json__clone(dst, src, 0U); }
 
-/**
- * @brief  Build sorted index for object to enable O(log n) lookup.
- *         Call after parsing if many lookups are expected.
- *
- * @note   Called automatically by json_obj_get if is_sorted == false.
- *         To sort eagerly: json_obj_finalize(arena, root).
- */
 JsonError json_obj_finalize(JsonArena* arena, JsonValue* obj)
 {
     if (obj == NULL || arena == NULL)    { return JSON_ERR_NULL_PARAM; }
     if (obj->type != JSON_OBJECT)        { return JSON_ERR_TYPE_MISMATCH; }
     return json__obj_sort(obj, arena);
 }
-
-/* ── §11.15  Error strings ──────────────────────────────────────────────── */
 
 const char* json_error_str(JsonError err)
 {
@@ -2775,4 +2748,7 @@ const char* json_error_str(JsonError err)
 #undef JSON__CHECK_OUT
 
 #endif /* JSON_IMPLEMENTATION */
+#ifdef __cplusplus
+}
+#endif
 #endif /* JSON_PAL_H */

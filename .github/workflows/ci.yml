@@ -1,0 +1,46 @@
+name: sJson checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        config: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DBUILD_SHARED_LIBS=ON -DSJSON_WARNINGS_AS_ERRORS=ON -DSJSON_BUILD_BENCHMARKS=OFF -DSJSON_BUILD_FUZZERS=ON
+      - run: cmake --build build --config ${{ matrix.config }} --parallel 2
+      - run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path bindings/rust/Cargo.toml --check
+      - run: cargo clippy --manifest-path bindings/rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path bindings/rust/Cargo.toml
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DSJSON_SANITIZERS=ON -DSJSON_BUILD_BENCHMARKS=OFF -DSJSON_BUILD_FUZZERS=ON
+        env:
+          CC: clang
+          CXX: clang++
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
