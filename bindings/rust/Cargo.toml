@@ -1,0 +1,12 @@
+[package]
+name = "sjson-native"
+version = "2.0.0"
+edition = "2021"
+license = "GPL-3.0-only OR MIT"
+description = "Safe document and borrowed-value bindings for sJson"
+build = "build.rs"
+# The build uses the C sources in this repository; no crates.io release yet.
+publish = false
+
+[lib]
+path = "src/lib.rs"

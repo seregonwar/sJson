@@ -1,8 +1,8 @@
 # sJson
 
-**sJson** is a single-header **C99** JSON library focused on safety, portability and measurable speed. It uses an arena allocator, has no third-party runtime dependency, and exposes a stable C API that can be wrapped by C++, Rust and other static languages.
+**sJson** is a single-header **C99** JSON library focused on safety, portability and measurable speed. It uses an arena allocator, has no third-party runtime dependency, and provides C, C++17, Python and Rust interfaces. The optional opaque C ABI keeps foreign-language bindings independent of native struct layouts.
 
-Version: **2.0.0**  
+Version: **2.0.0**
 License: **GPL-3.0-only OR MIT** (dual-license)
 
 ## License
@@ -305,12 +305,15 @@ Recommended rules:
 - expose strings as pointer + length; do not assume NUL termination;
 - call `json_obj_finalize` before repeated object lookups.
 
-FFI roadmap:
+Available integrations:
 
-- **C++**: initial RAII wrapper in `bindings/cpp/sjson.hpp` around `JsonArena*` and `JsonValue*`.
-- **Rust**: `sjson-sys` crate generated from the C ABI, followed by a safe wrapper crate.
-- **Flat C ABI**: stable opaque-handle API for languages that should not depend on internal structs.
-- **Cross-language benchmarks**: C vs C++ wrapper vs Rust FFI using the same datasets.
+- **C++17**: shared storage, stale-value detection, `parse_replace()`, `trim()` and serialization.
+- **Python 3.10+**: `loads()`, `normalize()` and context-managed native documents via ctypes.
+- **Rust**: RAII documents, lifetime-bound values, immutable shared reads and a CMake-backed build script.
+- **Opaque C ABI**: pointer-and-length strings and document handles for additional languages.
+
+See [bindings](docs/bindings.md) for builds, ownership rules and examples, and
+[validation](docs/testing.md) for the test matrix and sanitizer commands.
 
 ### cJSON compatibility layer
 
@@ -380,10 +383,13 @@ benchmarks/bench_assets.c  benchmark runner for downloaded official assets
 tests/json_corpus_runner.c JSONTestSuite corpus runner
 fuzz/fuzz_parse.c          libFuzzer-compatible parse/write fuzz target
 compat/cjson/              source-level cJSON migration wrapper
-bindings/cpp/sjson.hpp    initial C++ RAII wrapper
+bindings/cpp/sjson.hpp    C++17 ownership wrapper
+bindings/ffi/             opaque C ABI (static or shared library)
+bindings/python/          Python ctypes package and tests
+bindings/rust/            safe Rust crate and tests
 scripts/fetch_official_assets.sh official asset downloader
 docs/                     API, performance and compatibility notes
-.github/workflows/ci.yml  Linux/Windows CI
+.github/workflows/ci.yml  Linux/Windows/macOS and sanitizer CI
 Makefile                  quick build/test/benchmark targets
 CMakeLists.txt            cross-platform build/install/package file
 ```

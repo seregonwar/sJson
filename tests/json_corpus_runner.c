@@ -4,8 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
 
 #if defined(_WIN32)
 #define PATH_SEP "\\"
@@ -98,10 +102,11 @@ static int run_one(const char* path, CorpusStats* st) {
     return 0;
 }
 
+#ifndef _WIN32
 static int is_regular_file(const char* path) {
     struct stat st;
     if (stat(path, &st) != 0) { return 0; }
-    return (st.st_mode & S_IFREG) != 0;
+    return S_ISREG(st.st_mode);
 }
 
 static int run_dir(const char* dir, CorpusStats* st) {
@@ -122,6 +127,29 @@ static int run_dir(const char* dir, CorpusStats* st) {
     closedir(d);
     return 0;
 }
+#else
+static int run_dir(const char* dir, CorpusStats* st) {
+    WIN32_FIND_DATAA entry;
+    HANDLE search;
+    char pattern[4096];
+    snprintf(pattern, sizeof pattern, "%s\\*", dir);
+    search = FindFirstFileA(pattern, &entry);
+    if (search == INVALID_HANDLE_VALUE) { return 1; }
+    do {
+        char path[4096];
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { continue; }
+        if (snprintf(path, sizeof path, "%s\\%s", dir, entry.cFileName) >= (int)sizeof path) {
+            FindClose(search); return 1;
+        }
+        if (run_one(path, st) != 0) { FindClose(search); return 1; }
+    } while (FindNextFileA(search, &entry));
+    {
+        DWORD error = GetLastError();
+        FindClose(search);
+        return error == ERROR_NO_MORE_FILES ? 0 : 1;
+    }
+}
+#endif
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : "tests/JSONTestSuite/test_parsing";
